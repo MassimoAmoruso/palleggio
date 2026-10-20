@@ -23,6 +23,7 @@ window.addEventListener('error',function(e){var m=document.getElementById('main'
   m.querySelector('pre').textContent=src.slice(Math.max(0,(e.colno||0)-80),(e.colno||0)+80)});
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap">
 <style>
 /* Layout: navy sidebar (ball-blue + ball-yellow brand), work area of tables and panels; on phones a top bar, a bottom tab bar and tables as cards */
@@ -1547,7 +1548,7 @@ const REMOTE=GAS||!!CFG.api;
 const OLD_PAGE=GAS&&!!CFG.sito;
 const COLLS=['gyms','teams','staff','dirigenti','athletes','slots','matches','utenti','scout','avversari'];
 const POLL=20000;
-const SYNC={ready:false,version:0,epoch:'',base:new Map(),skip:new Map(),full:true,fullAt:0,dirty:new Set(),noDelta:new Set(),busy:false,again:false,timer:0,deb:0,state:'ok',err:'',at:null,user:'',url:'',needRender:false};
+const SYNC={ready:false,version:0,epoch:'',base:new Map(),skip:new Map(),full:true,fullAt:0,dirty:new Set(),noDelta:new Set(),busy:false,again:false,timer:0,deb:0,state:'ok',err:'',at:null,user:'',url:'',needRender:false,me:null,dataDirty:false,dataAt:0,dataOff:false,gen:0};
 const byWhen=(a,b)=>(a.data+a.ora).localeCompare(b.data+b.ora);
 /* utente collegato: profilo calcolato dal server con le regole di perm.js. Qui serve solo per adattare
    l'interfaccia: i dati che non può vedere non arrivano e le modifiche non permesse il server le rifiuta */
@@ -1583,12 +1584,14 @@ function saveRec(c,o){
    Si inviano solo i record cambiati rispetto all'ultima versione letta. Se nel frattempo un altro utente
    ha modificato lo stesso record, il server unisce le due modifiche quando toccano campi diversi;
    se toccano lo stesso campo vince la sua versione e l'utente viene avvisato. */
-const gs=(fn,...a)=>GAS?new Promise((ok,ko)=>google.script.run.withSuccessHandler(ok).withFailureHandler(ko)[fn](...a)):gsPost(fn,a);
-/* testo semplice: il browser non chiede permessi preliminari al server, che risponde dopo un rinvio a googleusercontent.com */
+/* risposta del server già decodificata (le funzioni di Code.gs restituiscono testo JSON) */
+const gs=(fn,...a)=>GAS?new Promise((ok,ko)=>google.script.run.withSuccessHandler(ok).withFailureHandler(ko)[fn](...a)).then(JSON.parse):gsPost(fn,a);
+/* testo semplice: il browser non chiede permessi preliminari al server, che risponde dopo un rinvio a googleusercontent.com.
+   v:2 = il server inserisce il JSON della risposta così com'è (j), senza ricodificarlo come testo (r) */
 async function gsPost(fn,args){const ac=new AbortController(),t=setTimeout(()=>ac.abort(),90e3);
-  try{const r=await fetch(CFG.api,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({fn,args}),redirect:'follow',signal:ac.signal});
+  try{const r=await fetch(CFG.api,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({fn,args,v:2}),redirect:'follow',signal:ac.signal});
     if(!r.ok)throw new Error('Connessione assente');let x;try{x=await r.json()}catch(e){throw new Error('Risposta del server non valida: riprova tra poco')}
-    if(!x.ok)throw new Error(x.err||'Errore sconosciuto');return x.r}
+    if(!x.ok)throw new Error(x.err||'Errore sconosciuto');return'j'in x?x.j:JSON.parse(x.r)}
   catch(e){if(e.name==='AbortError')throw new Error('Connessione assente');throw e}finally{clearTimeout(t)}}
 /* limite del server (Code.gs, MAX_JSON): un record più grande non si può salvare */
 const MAX_JSON=360000;
@@ -1664,7 +1667,7 @@ function setBase(c,id,rev,json){const k=c+'/'+id;if(json==null)SYNC.base.delete(
 /* modifiche non ancora salvate, conservate sul dispositivo: se l'app si chiude senza rete non vanno perse
    e al prossimo avvio (stesso utente) si riapplicano e si inviano */
 const PEND_KEY='palleggio-pending';
-function savePending(){if(!REMOTE||!SYNC.ready||ME?.preview)return;
+function savePending(){if(!SYNC.ready||ME?.preview)return;/* SYNC.ready solo con il server (start) */
   try{let ch;
     if(SYNC.full)ch=pendingChanges();
     else{/* solo i record segnati e quelli già conservati: le altre modifiche sono già state salvate */
@@ -1672,8 +1675,54 @@ function savePending(){if(!REMOTE||!SYNC.ready||ME?.preview)return;
       const keys=new Set(SYNC.dirty);if(old&&old.user===SYNC.user)(old.changes||[]).forEach(x=>keys.add(x.c+'/'+x.id));
       ch=keys.size?pendingChanges(snapOf(keys),[...keys]):[]}
     /* sul dispositivo il record intero, mai il delta */
-    if(ch.length)localStorage.setItem(PEND_KEY,sj({user:SYNC.user,at:Date.now(),changes:ch.map(({delta,...x})=>x)}));else localStorage.removeItem(PEND_KEY)}catch(e){}}
+    if(!ch.length){localStorage.removeItem(PEND_KEY);return}
+    const txt=sj({user:SYNC.user,at:Date.now(),changes:ch.map(({delta,...x})=>x)});
+    /* memoria piena: le modifiche in attesa contano più della copia dei dati, che si riprende dal server */
+    try{localStorage.setItem(PEND_KEY,txt)}catch(e){SYNC.dataOff=true;dropData();localStorage.setItem(PEND_KEY,txt)}}catch(e){}}
 const dropPending=()=>{try{localStorage.removeItem(PEND_KEY)}catch(e){}};
+/* copia dei dati sul dispositivo: all'apertura l'app si mostra subito con questa, senza aspettare il server; intanto
+   caricaTutto rilegge tutto e allinea record per record (refreshAll). Contiene i record come li ha mandati il server
+   a questa persona (base, senza le modifiche in attesa, che stanno in PEND_KEY) e vale solo con la stessa chiave del
+   dispositivo. Si aggiorna al più ogni minuto (mai durante lo scout, dove ogni tocco cambia i dati) e quando l'app va
+   in secondo piano; uscendo si cancella. Oltre DATA_MAX caratteri non si salva: lo spazio serve alle modifiche in attesa */
+const DATA_KEY='palleggio-dati',DATA_MAX=1500000;
+function saveData(){if(!SYNC.ready||!SYNC.me||SYNC.dataOff)return;SYNC.dataDirty=false;SYNC.dataAt=Date.now();
+  try{const txt=sj({f:1,t:impronta(getToken()),user:SYNC.user,url:SYNC.url,appUrl:SYNC.appUrl,version:SYNC.version,epoch:SYNC.epoch,me:SYNC.me,at:Date.now(),
+    recs:[...SYNC.base.values()].map(b=>[b.c,b.id,b.rev,b.json])});
+    if(txt.length>DATA_MAX)throw new Error('troppo grande');localStorage.setItem(DATA_KEY,txt)}
+  catch(e){/* troppi dati o memoria del browser piena: si continua senza copia */SYNC.dataOff=true;dropData()}}
+const dropData=()=>{try{localStorage.removeItem(DATA_KEY)}catch(e){}};
+function readData(){try{const d=JSON.parse(localStorage.getItem(DATA_KEY)||'null');
+  if(d&&d.f===1&&d.t===impronta(getToken())&&d.me&&Array.isArray(d.recs)&&d.recs.length)return d}catch(e){}return null}
+/* dati ricevuti dal server (caricaTutto) o dalla copia sul dispositivo: d.recs = [[c, id, rev, json]] */
+function resetSync(d){
+  Object.assign(SYNC,{user:d.user||'',url:d.url||'',appUrl:d.appUrl||'',version:d.version,epoch:d.epoch||'',me:d.me,base:new Map(),skip:new Map(),full:true,fullAt:0,dirty:new Set(),noDelta:new Set(),at:new Date(d.at||Date.now()),state:'ok',err:''});
+  S=blank();ME=d.me}
+function useData(d){resetSync(d);
+  for(const[c,id,rev,json]of d.recs){applyRecord(c,id,json);setBase(c,id,rev,json)}
+  restorePending();S.matches.sort(byWhen);start()}
+const recsOf=r=>r.records.map(x=>[x.c,x.id,x.rev,x.json]);
+/* dopo l'apertura con la copia: tutti i dati dal server, come all'apertura delle versioni precedenti (arrivano anche
+   le correzioni fatte a mano nel foglio, che sincronizza non vede). Ogni record diverso dalla copia si allinea
+   tenendo le modifiche fatte intanto su questo dispositivo (rebaseRecord); quelli spariti dal server si tolgono.
+   Permessi cambiati o dati ripristinati: si riparte da questi dati come al primo caricamento */
+/* allinea dati e base alla risposta di caricaTutto; baseNow = base prima della richiesta. Restituisce quanti record cambiano */
+function alignAll(r,baseNow){const srv=new Map(r.records.map(x=>[x.c+'/'+x.id,x]));let n=0;
+  for(const[k,x]of srv){const b=SYNC.base.get(k);if(b&&b.rev===x.rev&&b.json===x.json)continue;
+    setBase(x.c,x.id,x.rev,x.json);rebaseRecord(x.c,x.id,baseNow.get(k)??null,x.json);n++}
+  for(const[k,b]of[...SYNC.base])if(!srv.has(k)){SYNC.base.delete(k);applyRecord(b.c,b.id,null);n++}
+  Object.assign(SYNC,{version:r.version,user:r.user||SYNC.user,url:r.url||'',appUrl:r.appUrl||'',me:r.me,at:new Date(),dataDirty:true});ME=r.me;
+  return n}
+async function refreshAll(gen){
+  SYNC.busy=true;clearTimeout(SYNC.timer);clearTimeout(SYNC.deb);
+  const baseNow=new Map([...SYNC.base].map(([k,b])=>[k,b.json]));
+  try{const r=await gs('caricaTutto',getToken(),devLabel());
+    if(gen!==SYNC.gen)return;/* nel frattempo si è usciti o ricaricato */
+    if(!r.records.length||r.epoch!==SYNC.epoch||r.me?.key!==ME?.key){savePending();SYNC.busy=false;useData({...r,recs:recsOf(r)});SYNC.dataDirty=true;return}
+    if(alignAll(r,baseNow)){S.matches.sort(byWhen);refresh()}else renderStatus()}
+  catch(e){if(gen!==SYNC.gen)return;if(isAuth(e)){SYNC.busy=false;logoutLocal(errMsg(e));return}setSync('error',errMsg(e))}
+  finally{if(gen===SYNC.gen&&SYNC.ready){SYNC.busy=false;SYNC.again=false;savePending();if(SYNC.dataDirty)saveData();
+    clearTimeout(SYNC.timer);clearTimeout(SYNC.deb);SYNC.deb=setTimeout(sync,SYNC.state==='error'?10000:anyPending()?0:POLL)}}}
 /* dopo il caricamento: riapplica le modifiche salvate sul dispositivo se il record sul server non è cambiato,
    oppure se sono cambiati solo campi diversi da quelli modificati qui */
 function restorePending(){let p=null;try{p=JSON.parse(localStorage.getItem(PEND_KEY)||'null')}catch(e){}
@@ -1710,9 +1759,9 @@ async function sync(){
   const baseNow=new Map([...SYNC.base].map(([k,b])=>[k,b.json]));
   try{
     const payload=send.map(ch=>ch.delta?{c:ch.c,id:ch.id,base:ch.base,label:ch.label,delta:ch.delta}:ch);
-    const res=JSON.parse(await gs('sincronizza',getToken(),sj({version:SYNC.version,epoch:SYNC.epoch,key:ME?.key,changes:payload})));
+    const res=await gs('sincronizza',getToken(),sj({version:SYNC.version,epoch:SYNC.epoch,key:ME?.key,changes:payload}));
     /* dati ripristinati da un backup: si ricarica tutto (le modifiche in attesa restano sul dispositivo e si riapplicano se possibile) */
-    if(res.restored){SYNC.busy=false;putBack();savePending();toast('I dati sono stati ripristinati da un backup: li ricarico',5000);boot();return}
+    if(res.restored){SYNC.busy=false;putBack();savePending();toast('I dati sono stati ripristinati da un backup: li ricarico',5000);boot(true);return}
     const sent=new Map(send.map(ch=>[ch.c+'/'+ch.id,ch]));
     /* il server restituisce il record come lo vede l'utente: se differisce da quello inviato, si allinea */
     let redraw=false,merged=null;
@@ -1728,6 +1777,7 @@ async function sync(){
       if(r.resend){SYNC.noDelta.add(k);SYNC.dirty.add(k);SYNC.again=true;continue}
       if(ch)SYNC.skip.set(k,ch.json);
       toast(`«${ch?.label||'Un dato'}» non è stato salvato (${r.why}): le altre modifiche sono salvate`,8000)}
+    if(res.version!==SYNC.version||res.applied.length||res.changes.length||res.conflicts.length||denied.length)SYNC.dataDirty=true;
     SYNC.version=res.version;SYNC.at=new Date();if(res.user)SYNC.user=res.user;
     if(redraw||res.conflicts.length||denied.length||res.changes.length){S.matches.sort(byWhen);refresh()}
     if(denied.length)toast(`Non hai i permessi per modificare «${denied[0].label||'questo dato'}»: modifica annullata`,6000);
@@ -1737,9 +1787,9 @@ async function sync(){
     const still=anyPending();
     setSync(still?'pending':SYNC.skip.size?'error':'ok',SYNC.skip.size?'Alcuni dati non si possono salvare':'');
     /* i permessi sono cambiati (es. nuova squadra assegnata): si ricarica tutto */
-    if(res.reload&&!still){SYNC.busy=false;toast('I tuoi permessi sono cambiati: aggiorno i dati',4000);boot();return}
+    if(res.reload&&!still){SYNC.busy=false;toast('I tuoi permessi sono cambiati: aggiorno i dati',4000);boot(true);return}
   }catch(e){if(isAuth(e)){SYNC.busy=false;logoutLocal(errMsg(e));return}putBack();setSync('error',errMsg(e))}
-  finally{SYNC.busy=false;savePending();
+  finally{SYNC.busy=false;savePending();if(SYNC.dataDirty&&!UI.scout&&Date.now()-SYNC.dataAt>60e3)saveData();
     if(SYNC.again){SYNC.again=false;SYNC.deb=setTimeout(sync,50)}
     else SYNC.timer=setTimeout(sync,SYNC.state==='error'?10000:POLL)}
 }
@@ -1776,21 +1826,24 @@ const urlParams=()=>new Promise(ok=>{if(!GAS){ok(Object.fromEntries(new URLSearc
 const clearUrl=()=>{try{GAS?google.script.history.replace(null,{},''):history.replaceState(null,'',location.pathname+location.hash)}catch(e){}};
 const newSite=()=>OLD_PAGE?`<p class="moved">Palleggio ha un nuovo indirizzo, dove resti collegato anche chiudendo il browser: <a href="${esc(CFG.sito)}" target="_top" rel="noopener">${esc(CFG.sito.replace(/^https:\/\//,'').replace(/\/$/,''))}</a>. Aprilo e aggiungilo alla schermata Home.</p>`:'';
 let LINK_SEEN=false;
-async function boot(){
+/* full=true: ricarica tutto dal server, senza la copia sul dispositivo (permessi cambiati, ripristino, «Ricarica dati») */
+async function boot(full){
   if(!REMOTE){load();ME=adminProfile('');start();return}
-  SYNC.ready=false;clearTimeout(SYNC.timer);
+  /* nuova sessione: un caricamento o un salvataggio rimasto in corso dalla precedente non blocca più */
+  SYNC.ready=false;SYNC.gen++;SYNC.busy=false;clearTimeout(SYNC.timer);
   /* pulsante «Entra in Palleggio» dell'email: si usa solo dopo un tocco, così chi controlla i link delle email non lo consuma */
   if(!LINK_SEEN){LINK_SEEN=true;const p=await urlParams();if(p.entra){if(getToken())clearUrl();else{linkScreen(String(p.entra));return}}}
   if(!getToken()){loginScreen();return}
+  /* apertura immediata con la copia sul dispositivo; tutti i dati aggiornati arrivano subito dopo (refreshAll) */
+  const d=full===true?null:readData();
+  if(d){useData(d);refreshAll(SYNC.gen);return}
   screen(`<div class="splash"><div class="spin" aria-hidden="true"></div><p>Caricamento dati…</p></div>`);
   try{
-    const r=JSON.parse(await gs('caricaTutto',getToken(),devLabel()));
-    Object.assign(SYNC,{user:r.user||'',url:r.url||'',appUrl:r.appUrl||'',version:r.version,epoch:r.epoch||'',base:new Map(),skip:new Map(),full:true,fullAt:0,dirty:new Set(),noDelta:new Set(),at:new Date(),state:'ok',err:''});
-    S=blank();ME=r.me;
-    if(!r.records.length){if(ME.admin)firstRun();else screen(`<div class="splash"><h2>Nessun dato</h2><p>La società non ha ancora inserito i dati.</p><button class="btn" type="button" data-act="logout">Esci</button></div>`);return}
-    for(const x of r.records){applyRecord(x.c,x.id,x.json);setBase(x.c,x.id,x.rev,x.json)}
-    restorePending();
-    S.matches.sort(byWhen);start();if(pendingChanges().length){setSync('pending');SYNC.deb=setTimeout(sync,500)}
+    const r=await gs('caricaTutto',getToken(),devLabel());
+    if(!r.records.length){resetSync(r);
+      if(ME.admin)firstRun();else screen(`<div class="splash"><h2>Nessun dato</h2><p>La società non ha ancora inserito i dati.</p><button class="btn" type="button" data-act="logout">Esci</button></div>`);return}
+    useData({...r,recs:recsOf(r)});saveData();
+    if(pendingChanges().length){setSync('pending');SYNC.deb=setTimeout(sync,500)}
   }catch(e){if(isAuth(e)){logoutLocal(errMsg(e));return}
     screen(`<div class="splash"><h2>Impossibile caricare i dati</h2><p>${esc(errMsg(e))}</p><button class="btn pri" type="button" data-act="retry">Riprova</button></div>`)}
 }
@@ -1823,12 +1876,12 @@ function linkScreen(link,msg){
 document.addEventListener('input',e=>{if(e.target.id!=='lg_code')return;const v=e.target.value.replace(/\D/g,'');if(v.length!==6)return;
   const f=e.target.form,b=f?.querySelector('[type=submit]');if(b&&!b.disabled){try{f.requestSubmit()}catch(x){b.click()}}});
 /* sessione scaduta o revocata, oppure uscita: si torna all'accesso senza dati in memoria */
-function logoutLocal(msg){setToken('');ME=null;S=blank();SYNC.ready=false;SYNC.base=new Map();clearTimeout(SYNC.timer);clearTimeout(SYNC.deb);LOGIN.step='email';if(!$('#drawer').hidden)closeDrawer();loginScreen(msg)}
+function logoutLocal(msg){setToken('');dropData();SYNC.gen++;ME=null;S=blank();SYNC.ready=false;SYNC.base=new Map();clearTimeout(SYNC.timer);clearTimeout(SYNC.deb);LOGIN.step='email';if(!$('#drawer').hidden)closeDrawer();loginScreen(msg)}
 document.addEventListener('submit',async e=>{if(e.target.id!=='loginForm')return;e.preventDefault();const b=e.target.querySelector('[type=submit]');b.disabled=true;
   try{
     if(LOGIN.step==='email'){const v=$('#lg_email').value.trim().toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)){b.disabled=false;loginScreen('Scrivi un indirizzo email valido');return}
       LOGIN.email=v;await gs('richiediCodice',v);LOGIN.step='code';loginScreen()}
-    else{const r=JSON.parse(await gs('verificaCodice',LOGIN.email,$('#lg_code').value,devLabel()));setToken(r.token);LOGIN.step='email';boot()}
+    else{const r=await gs('verificaCodice',LOGIN.email,$('#lg_code').value,devLabel());setToken(r.token);LOGIN.step='email';boot()}
   }catch(err){loginScreen(errMsg(err))}});
 
 /* sezioni visibili per ruolo */
@@ -2239,13 +2292,14 @@ function bindDrop(dSel,fSel,cb){
   drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');const f=e.dataTransfer.files[0];if(f)cb(f)});
 }
 /* SheetJS (cdnjs): circa 900 KB, si scarica solo quando serve (import ed export Excel), non all'avvio dell'app.
-   Chi può importare o esportare lo riceve in anticipo, a pagina caricata (preloadXlsx) */
+   Chi può importare o esportare lo riceve in anticipo, a pagina caricata (preloadXlsx), solo dal computer:
+   sul telefono, spesso con la rete dati, si scarica quando si apre un import o un export */
 const XLSX_URL='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';let xlsxLib=null;
 function loadXlsx(){return xlsxLib=xlsxLib||new Promise((ok,ko)=>{if(typeof XLSX!=='undefined'){ok(XLSX);return}
   const s=document.createElement('script');s.src=XLSX_URL;
   s.onload=()=>typeof XLSX!=='undefined'?ok(XLSX):(xlsxLib=null,ko(new Error('Libreria Excel non disponibile')));
   s.onerror=()=>{xlsxLib=null;s.remove();ko(new Error('Libreria Excel non caricata: controlla la connessione'))};document.head.appendChild(s)})}
-function preloadXlsx(){if(ME&&(ME.admin||ME.giov||ME.workTeams.length))setTimeout(()=>loadXlsx().catch(()=>{}),3000)}
+function preloadXlsx(){if(ME&&(ME.admin||ME.giov||ME.workTeams.length)&&!matchMedia('(pointer:coarse)').matches)setTimeout(()=>loadXlsx().catch(()=>{}),3000)}
 async function readWorkbook(f,cb){
   try{await loadXlsx()}catch(e){toast('Lettore Excel non caricato: controlla la connessione o usa l\'incolla da Excel');return}
   const r=new FileReader();r.onload=()=>{let wb;try{wb=XLSX.read(new Uint8Array(r.result),{type:'array',raw:/\.csv$/i.test(f.name)})}catch(e){toast('File non leggibile: salvalo come .xlsx e riprova');return}cb(wb)};
@@ -3057,7 +3111,7 @@ function calBody(){const T=CAL.only?[CAL.only]:calTeams(),F=icsFeeds(calD(),T);
   ${REMOTE&&CAL.link?`<p class="hint" style="margin-top:14px">Il link è personale: chi lo riceve vede i tuoi stessi calendari. Se l'hai condiviso per errore <button class="btn sm" type="button" data-act="calNew">Rigenera il link</button> e quelli vecchi smettono di funzionare (vanno riaggiunti).</p>`:''}`}
 function formCal(only){CAL.only=only||null;openDrawer('Calendario sul telefono',`<div id="calBox">${calBody()}</div>`);if(REMOTE&&!CAL.link)calLink(false)}
 const calRedraw=()=>{const b=$('#calBox');if(b&&!$('#drawer').hidden)b.innerHTML=calBody()};
-async function calLink(nuovo){CAL.err='';try{CAL.link=JSON.parse(await gs('linkCalendario',getToken(),!!nuovo))}catch(e){CAL.err='Link non disponibile: '+errMsg(e)}
+async function calLink(nuovo){CAL.err='';try{CAL.link=await gs('linkCalendario',getToken(),!!nuovo)}catch(e){CAL.err='Link non disponibile: '+errMsg(e)}
   calRedraw();if(nuovo&&!CAL.err)toast('Link rigenerato: aggiungi di nuovo i calendari su iPhone e Outlook')}
 function calFile(id){const[k,t,c]=id.split('|'),f={k,t,c},txt=icsBuild(calD(),f,Date.now());
   const name=icsFileName(calD(),f);
@@ -3557,7 +3611,7 @@ async function bioTest(btn){const box=$('#bioRes');if(!box)return;btn.disabled=t
   <div class="actions" style="margin-top:8px"><button class="btn sm" type="button" data-act="copy" data-text="${esc(txt)}">${I.copy}Copia il risultato</button></div>`;btn.disabled=false}
 const devRedraw=()=>{const b=$('#devBox');if(b&&!$('#drawer').hidden)b.innerHTML=devBody()};
 async function formDevices(){DEV_LIST=null;openDrawer('Dispositivi collegati',`<div id="devBox">${devBody()}</div>`);
-  try{DEV_LIST=JSON.parse(await gs('dispositivi',getToken())).list}catch(e){if(isAuth(e)){logoutLocal(errMsg(e));return}DEV_LIST=[];toast(errMsg(e))}devRedraw()}
+  try{DEV_LIST=(await gs('dispositivi',getToken())).list}catch(e){if(isAuth(e)){logoutLocal(errMsg(e));return}DEV_LIST=[];toast(errMsg(e))}devRedraw()}
 
 /* ---------- eliminare con «Annulla» ----------
    Il dato sparisce subito e per 5 secondi il messaggio offre Annulla, che rimette com'erano tutti i record toccati,
@@ -3591,9 +3645,9 @@ const ACT={
   help:el=>{const p=el.closest('.head')?.querySelector('p');if(!p)return;p.hidden=!p.hidden;el.setAttribute('aria-expanded',String(!p.hidden));el.title=(p.hidden?'Mostra':'Nascondi')+' la spiegazione';
     const o=helpClosed();if(p.hidden)o[UI.view]=1;else delete o[UI.view];try{localStorage.setItem(HELP_KEY,JSON.stringify(o))}catch(e){}},
   tema:(el,id)=>setTema(id||''),devices:()=>formDevices(),bioTest:el=>bioTest(el),
-  lgLink:async(el,id)=>{el.disabled=true;try{const r=JSON.parse(await gs('entraConLink',id,devLabel()));clearUrl();setToken(r.token);boot()}catch(e){clearUrl();LOGIN.step='email';loginScreen(errMsg(e))}},
+  lgLink:async(el,id)=>{el.disabled=true;try{const r=await gs('entraConLink',id,devLabel());clearUrl();setToken(r.token);boot()}catch(e){clearUrl();LOGIN.step='email';loginScreen(errMsg(e))}},
   lgNoLink:()=>{clearUrl();LOGIN.step='email';loginScreen()},
-  devOff:async(el,id)=>{el.disabled=true;try{const r=JSON.parse(await gs('revocaDispositivo',getToken(),id));if(r.out){logoutLocal('Hai disattivato questo dispositivo.');return}DEV_LIST=r.list;devRedraw();toast('Dispositivo disattivato: alla prossima apertura chiederà il codice')}catch(e){if(isAuth(e)){logoutLocal(errMsg(e));return}el.disabled=false;toast(errMsg(e))}},search:()=>formSearch(),txDue:()=>formTxDue(),
+  devOff:async(el,id)=>{el.disabled=true;try{const r=await gs('revocaDispositivo',getToken(),id);if(r.out){logoutLocal('Hai disattivato questo dispositivo.');return}DEV_LIST=r.list;devRedraw();toast('Dispositivo disattivato: alla prossima apertura chiederà il codice')}catch(e){if(isAuth(e)){logoutLocal(errMsg(e));return}el.disabled=false;toast(errMsg(e))}},search:()=>formSearch(),txDue:()=>formTxDue(),
   aflag:(el,id)=>{UI.fa.flag=id||'';const s=$('#fa_flag');if(s)s.value=UI.fa.flag;V.atleti.list()},
   convoca:(el,id)=>{UI.com={...UI.com,team:id||'all',tipo:'famiglie',filtro:'',msg:TPL.convocazione};go('comunicazioni')},
   copy:el=>copyText(el.dataset.text,el),
@@ -3689,7 +3743,7 @@ const ACT={
   more:()=>openMenu(),club:()=>formClub(),
   reset:el=>{if(!el.classList.contains('confirm')){el.classList.add('confirm');el.textContent='Conferma: cancella le modifiche';return}
     FULLDATA=null;ME=adminProfile('');S=seed();save();UI.imp=null;closeDrawer();render();toast('Dati demo ripristinati')},
-  reload:()=>{if(SYNC.busy||pendingChanges().length){toast('Attendi il salvataggio delle modifiche, poi riprova');sync();return}closeDrawer();boot()},
+  reload:()=>{if(SYNC.busy||pendingChanges().length){toast('Attendi il salvataggio delle modifiche, poi riprova');sync();return}closeDrawer();boot(true)},
   retry:()=>boot(),
   lgBack:()=>{LOGIN.step='email';loginScreen()},
   lgResend:async()=>{try{await gs('richiediCodice',LOGIN.email);loginScreen('Se l\'indirizzo è registrato, ti abbiamo inviato un nuovo codice')}catch(e){loginScreen(errMsg(e))}},
@@ -3720,7 +3774,7 @@ document.addEventListener('change',e=>{const el=e.target;if(!el.dataset.set||!ME
 /* aggiornamenti arrivati mentre si scriveva in un filtro: applicali quando il campo perde il focus */
 document.addEventListener('focusout',()=>setTimeout(()=>{if(SYNC.needRender)refresh()},0));
 /* tornando all'app: data di oggi aggiornata e dati degli altri; uscendo: modifiche in attesa salvate sul dispositivo */
-document.addEventListener('visibilitychange',()=>{if(document.hidden){savePending();return}checkToday();sync()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){savePending();if(SYNC.dataDirty)saveData();return}checkToday();sync()});
 window.addEventListener('pagehide',savePending);
 /* cambio di giorno con l'app aperta: scadenze, "prossima gara" e conteggi si ricalcolano */
 function checkToday(){const was=TODAY_ISO;setToday();if(TODAY_ISO!==was&&S&&!document.body.classList.contains('boot'))refresh()}
