@@ -1834,7 +1834,7 @@ document.addEventListener('submit',async e=>{if(e.target.id!=='loginForm')return
 /* sezioni visibili per ruolo */
 function myViews(){if(!ME)return[];const op=isOp(),fam=ME.children.length>0;
   return VIEWS.map(v=>v[0]).filter(k=>k==='famiglia'?fam:k==='accessi'?ME.admin:k==='quote'?canQuote():k==='importa'?(ME.admin||ME.giov):['dashboard','partite','richieste','palestre','squadre'].includes(k)?isCal():op)}
-const TAB_ORDER=[['dashboard','Da fare'],['famiglia','Famiglia'],['atleti','Atleti'],['quote','Quote'],['partite','Partite'],['palestre','Palestre'],['squadre','Squadre']];
+const TAB_ORDER=[['dashboard','Panoramica'],['famiglia','Famiglia'],['atleti','Atleti'],['quote','Quote'],['partite','Partite'],['palestre','Palestre'],['squadre','Squadre']];
 const myTabs=()=>{const mv=myViews();return TAB_ORDER.filter(([k])=>mv.includes(k)).slice(0,4)};
 function start(){
   SYNC.ready=REMOTE;document.body.classList.remove('boot');migraSegreteria();
@@ -1847,7 +1847,7 @@ UI.rq={stato:'richiesta',team:'',sel:[]};
 
 /* ---------- navigazione ---------- */
 const VIEWS=[
-  ['dashboard','Da fare',I.home],['atleti','Atleti',I.ath],['quote','Quote iscrizione',I.euro],['dirigenti','Dirigenti',I.dir],
+  ['dashboard','Panoramica',I.home],['atleti','Atleti',I.ath],['quote','Quote iscrizione',I.euro],['dirigenti','Dirigenti',I.dir],
   ['staff','Staff tecnico',I.staff],['squadre','Squadre e gironi',I.team],['partite','Partite FIPAV',I.cal],['richieste','Richieste di spostamento',I.swap],['palestre','Palestre',I.gym],['comunicazioni','Comunicazioni',I.msg],['importa','Importa da Excel',I.up],['accessi','Accessi e ruoli',I.key]];
 VIEWS.splice(1,0,['famiglia','La mia famiglia',I.fam]);
 /* sezioni raggruppate nel menu: calendario, persone, società */
