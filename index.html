@@ -501,6 +501,11 @@ table.perm td,table.perm th{vertical-align:top}
 .sc-tab td:first-child,.sc-tab th:first-child{text-align:left;white-space:nowrap}
 .sc-tab tfoot td{font-weight:700;border-top:2px solid var(--line)}
 .sc-roster{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+/* convocate: ruolo sotto il nome, così la riga non si allarga */
+.sc-roster .check{min-width:0}
+.sc-roster .num{min-width:2ch;text-align:right}
+.sc-ath{display:grid;min-width:0;line-height:1.25}
+.sc-ath small{font-size:11.5px;color:var(--muted)}
 @media print{.app,#scrim,.drawer-h,.drawer-f,.toast,.sc-rep .actions{display:none!important}.drawer{position:static;width:auto;box-shadow:none}.drawer-b{overflow:visible}body{background:#fff}}
 
 .sc-mode{margin:0}
@@ -3485,7 +3490,7 @@ function scReadLineup(fd){const st=[1,2,3,4,5,6].map(z=>fd.get('z'+z)||'');
 function formScoutSetup(m){const L=scRosterOf(m),t=teamOf(m.teamId),tmp={teamId:m.teamId,roster:L.map(a=>a.id)};
   const pal=L.find(a=>/palleg/i.test(a.ruolo||'')),lib=L.find(a=>/libero/i.test(a.ruolo||''));
   openDrawer(`Scout · ${t?.sigla||''}`,`<p style="margin-top:0">${fmtDow(m.data)} ore ${esc(m.ora)} · ${matchLine(m)}</p>
-  <fieldset><legend>Convocate</legend><div class="checks sc-roster">${L.map(a=>`<label class="check"><input type="checkbox" name="roster" value="${a.id}" checked><b class="num">${esc(scNum(tmp,a.id))}</b> ${esc(fullName(a))}${scRuolo(a.id)?` <span class="meta">${esc(scRuolo(a.id).l)}</span>`:''}</label>`).join('')||'<p class="hint">Nessuna atleta nella squadra.</p>'}</div></fieldset>
+  <fieldset><legend>Convocate</legend><div class="checks sc-roster">${L.map(a=>`<label class="check"><input type="checkbox" name="roster" value="${a.id}" checked><b class="num">${esc(scNum(tmp,a.id))}</b><span class="sc-ath">${esc(fullName(a))}${scRuolo(a.id)?`<small>${esc(scRuolo(a.id).l)}</small>`:''}</span></label>`).join('')||'<p class="hint">Nessuna atleta nella squadra.</p>'}</div></fieldset>
   <fieldset><legend>Modulo di gioco</legend><div class="fgrid">${sel('modulo','Modulo','5-1',[['5-1','5-1 (un palleggiatore)'],['4-2','4-2 (due palleggiatori)']])}${sel('p1','Palleggiatore *',pal?.id||'',scOpt(tmp,tmp.roster))}${sel('p2','Secondo palleggiatore (solo 4-2)','',scOpt(tmp,tmp.roster))}</div>
   <p class="hint">Le rotazioni si numerano dalla posizione del palleggiatore: P1 con il palleggiatore in zona 1, poi P6, P5… Così le rotazioni sono confrontabili tra un set e l'altro.</p></fieldset>
   <fieldset><legend>Sestetto del primo set</legend>${scLineup(tmp,null)}<p class="hint">Disposizione come in campo: in alto la rete (zone 4, 3, 2), in basso la seconda linea. In zona 1 chi batte.</p></fieldset>
