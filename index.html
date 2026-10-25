@@ -820,6 +820,9 @@ tr.mute td{opacity:.55}
 }
 /* etichette lunghe (squadra · ruolo) vanno a capo invece di allargare la pagina sul telefono */
 .chips .chip{white-space:normal;max-width:100%}
+.sc-libsw{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.sc-fix{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sc-fix .btn{justify-content:center;padding:12px 8px}
 </style>
 </head>
 <body class="boot">
@@ -2049,7 +2052,7 @@ function previewAs(email){if(FULLDATA){S=FULLDATA;FULLDATA=null}
   if(!myViews().includes(UI.view))UI.view=myViews()[0];render();
   if(ME.preview)toast(`Anteprima come ${ME.nome||email}: le modifiche sono disattivate`,4000)}
 function go(v){if(!myViews().includes(v))v=myViews()[0]||'dashboard';UI.view=v;UI.scout=null;if(!$('#drawer').hidden)closeDrawer();try{history.replaceState(null,'','#'+v)}catch(e){}render();window.scrollTo(0,0)}
-function render(){SYNC.needRender=false;renderNav();const sc=UI.scout&&scRec(UI.scout),v=sc?V.scout:V[UI.view]||V.dashboard;
+function render(){SYNC.needRender=false;renderNav();const sc=UI.scout&&scRec(UI.scout),v=sc?V.scout:V[UI.view]||V.dashboard;scWake(!!sc);
   $('#main').innerHTML=(REMOTE?newSite():`<div class="demo"><i></i>Dati di esempio · prototipo</div>`)+(sc?'':`<div class="gbar">${searchBox('gq')}</div>`)+v.html();v.after?.()}
 /* intestazione della pagina: la spiegazione si chiude con «?» e resta chiusa (per pagina, su questo dispositivo) */
 const HELP_KEY='palleggio-aiuto-chiuso';
@@ -3417,6 +3420,7 @@ function scReplay(st,i,r){let us=0,them=0,serve=!!st.serve,rot=0,fresh=true,last
     else if(e.startsWith('L:')){lib=e.slice(2);continue}
     /* punto tolto a mano: cambia solo il punteggio, non battuta né rotazione */
     else if(e==='X+'||e==='X-'){if(e==='X+')us=Math.max(0,us-1);else them=Math.max(0,them-1);seq.push([us,them]);continue}
+    else if(e==='Y+'||e==='Y-'){if(e==='Y+')us++;else them++;seq.push([us,them]);continue}
     else{const[id,fv='']=e.split('.'),f=fv[0],v=fv[1],d=scDirOf(fv),k=P(),T=scIsO(id)?'them':'us',key=T+f+v,mir=scMir(close,key);close=null;
       if(T==='us'){const R=rf[k]=rf[k]||{},c=R[f]=R[f]||{n:0};c.n++;c[v]=(c[v]||0)+1;
         /* distribuzione: a chi va l'attacco, per rotazione e qualità dell'azione che lo precede */
@@ -3538,10 +3542,34 @@ function formScoutSet(r){const sets=scSets(r),last=r.sets[r.sets.length-1],lx=se
   {saveLabel:'Inizia il set',onSave:fd=>{const start=scReadLineup(fd);if(!start)return false;r.sets.push({start,serve:!!fd.get('serve'),ev:[]});r.at=Date.now();return`Set ${r.sets.length} iniziato`}});
   scLineupSync();
 }
-function formScoutSub(r){const x=scReplay(scCur(r),r.sets.length-1,r),bench=r.roster.filter(id=>!x.line.includes(id));
-  openDrawer('Cambio',`<div class="fgrid">${sel('out','Esce',x.line[0],scOpt(r,x.line))}${sel('in','Entra','',scOpt(r,bench))}</div><p class="hint">${r.libC?'Il libero entra ed esce da solo al posto dei centrali: non serve cambiarlo.':'Il libero non serve cambiarlo: le sue azioni si registrano dal pulsante in panchina.'}</p>`,
-  {saveLabel:'Conferma cambio',onSave:fd=>{const o=fd.get('out'),n=fd.get('in');if(!o||!n){toast('Scegli chi esce e chi entra');return false}scCur(r).ev.push(`S:${o}>${n}`);r.at=Date.now();return`Entra ${scName(n)}, esce ${scName(o)}`}});
+/* cambi: atleta (con il conto dei cambi del set) e, nella stessa scheda, il libero in campo */
+/* schermo sempre acceso mentre lo scout è aperto (Screen Wake Lock: iPhone da iOS 16.4, Android, computer). Il browser
+   lo rilascia quando la pagina va in secondo piano: al ritorno si richiede. Dove non c'è, non succede nulla */
+let SC_WAKE=null;
+function scWake(on){try{if(typeof navigator==='undefined'||!navigator.wakeLock)return;
+  if(on&&!SC_WAKE&&!document.hidden){SC_WAKE='attesa';navigator.wakeLock.request('screen').then(l=>{if(!UI.scout){l.release();SC_WAKE=null;return}SC_WAKE=l;l.addEventListener('release',()=>{if(SC_WAKE===l)SC_WAKE=null})}).catch(()=>{SC_WAKE=null})}
+  else if(!on&&SC_WAKE&&SC_WAKE.release){SC_WAKE.release();SC_WAKE=null}}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&UI.scout)scWake(true)});
+const scFixRefresh=()=>{if($('#dTitle')?.textContent==='Correggi'&&!$('#drawer').hidden)formScoutFix(scRec(UI.scout))};
+const SC_MAXCAMBI=6,scCambi=st=>st.ev.filter(e=>e.startsWith('S:')).length;
+function formScoutSub(r){const st=scCur(r),x=scReplay(st,r.sets.length-1,r),n=scCambi(st),bench=r.roster.filter(id=>!x.line.includes(id)&&!r.liberi.includes(id));
+  const lib=x.lib&&r.liberi.includes(x.lib)?x.lib:r.liberi[0],other=r.liberi.find(id=>id!==lib);
+  openDrawer('Cambi',`<fieldset><legend>Cambio atleta</legend><div class="fgrid">${sel('out','Esce',x.line[0],scOpt(r,x.line))}${sel('in','Entra','',scOpt(r,bench))}</div>
+  <p class="hint ${n>=SC_MAXCAMBI?'sc-err':''}">Cambi in questo set: <b>${n} di ${SC_MAXCAMBI}</b>${n>=SC_MAXCAMBI?' — limite raggiunto, controlla prima di confermare':''}.</p></fieldset>
+  ${r.liberi.length?`<fieldset><legend>Libero</legend><div class="sc-libsw"><span>In campo: <b>${esc(scOptL(r,lib))}</b></span>${other?`<button type="button" class="btn" data-act="scLib">Fai entrare ${esc(scNum(r,other)+' '+scName(other))}</button>`:''}</div>
+  <p class="hint">${r.libC?'Il libero entra ed esce da solo al posto dei centrali in seconda linea.':'Le azioni del libero si registrano dal suo pulsante in panchina.'}${other?' Il cambio del libero non conta tra i cambi.':''}</p></fieldset>`:''}`,
+  {saveLabel:'Conferma cambio',onSave:fd=>{const o=fd.get('out'),i=fd.get('in');if(!o||!i){toast('Scegli chi esce e chi entra');return false}st.ev.push(`S:${o}>${i}`);scSave(r);return`Entra ${scName(i)}, esce ${scName(o)}`}});
 }
+/* correzioni a mano, raccolte in una scheda: punteggio (±1 senza cambiare battuta e rotazione) e rotazione (avanti/indietro
+   senza punto). La scheda resta aperta e si aggiorna, così si possono fare più correzioni di seguito */
+const SC_MAXTO=2;
+function formScoutFix(r){const x=scReplay(scCur(r),r.sets.length-1,r),b=(act,id,l,dis,t)=>`<button type="button" class="btn" data-act="${act}" data-id="${id}" ${dis?'disabled':''} title="${esc(t)}">${l}</button>`;
+  openDrawer('Correggi',`<div class="summary"><span>Set ${r.sets.length} <b class="num">${x.us}–${x.them}</b></span><span>rotazione <b>P${x.rot}</b></span><span>battuta <b>${x.serve?'noi':'loro'}</b></span></div>
+  <fieldset><legend>Punteggio</legend><p class="hint" style="margin-top:0">Cambia solo il punteggio: battuta e rotazione restano come sono.</p>
+  <div class="sc-fix">${b('scMinus',1,'−1 Noi',!x.us,'Toglie un punto a noi')}${b('scMinus',0,'−1 Loro',!x.them,'Toglie un punto a loro')}${b('scPlusF',1,'+1 Noi','','Aggiunge un punto a noi senza rotazione')}${b('scPlusF',0,'+1 Loro','','Aggiunge un punto a loro senza rotazione')}</div></fieldset>
+  <fieldset><legend>Rotazione</legend><p class="hint" style="margin-top:0">Sposta la squadra di una posizione senza assegnare punti, per riportarla alla posizione giusta.</p>
+  <div class="sc-fix">${b('scRot',1,'Ruota avanti ↻','','Zona 2 va in zona 1')}${b('scRot',0,'Ruota indietro ↺','','Zona 1 torna in zona 2')}</div></fieldset>
+  <p class="hint">Ogni correzione resta nel registro: si annulla con ↶ Annulla o toccandola nelle ultime azioni.</p>`)}
 /* correzione di un'azione già registrata nel set in corso: si rilegge tutto, quindi punteggio, battuta e rotazioni tornano da soli */
 function formScoutEv(r,i){const st=scCur(r),e=st?.ev[i];if(e==null||!scMine(r)||r.fine)return;
   const del=()=>{st.ev.splice(i,1);scSave(r);return'Azione eliminata'};
@@ -3574,7 +3602,7 @@ function scSituazione(r,to){if(!r)return;const sets=scSets(r),i=r.sets.length-1,
   ${rot?`<p class="hint">Rotazione più difficile nel set: <b>P${rot.k}</b>, ${rot.w} punt${rot.w===1?'o':'i'} su ${rot.n} scambi.</p>`:''}
   <h3 style="margin:14px 0 6px">Attacco nel set</h3>${att.length?`<div class="summary">${att.map(([id,c])=>`<span>${esc(scNum(r,id)+' '+scName(id))} <b class="num">${c.n}</b> <span class="meta">eff ${scEff(c,'A')}</span></span>`).join('')}</div>`:'<p class="hint">Nessun attacco nel set.</p>'}
   <h3 style="margin:14px 0 6px">Errori nel set</h3>${err.length?`<div class="summary">${err.map(([id,c])=>`<span>${esc(scNum(r,id)+' '+scName(id))} <b class="num sc-err">${c.n}</b> <span class="meta">${Object.entries(c.f).map(([f,n])=>SH[f]+' '+n).join(' · ')}</span></span>`).join('')}</div>`:'<p class="hint">Nessun errore nel set.</p>'}`)}
-const scEvTxt=(r,e)=>e==='X+'?'Punteggio corretto: −1 a noi':e==='X-'?'Punteggio corretto: −1 a loro':e==='R+'?'Rotazione corretta: avanti di una posizione':e==='R-'?'Rotazione corretta: indietro di una posizione':e.startsWith('L:')?`Cambio libero: entra ${scNum(r,e.slice(2))} ${scName(e.slice(2))}`:e==='P+'?'Punto nostro':e==='P-'?'Punto avversario':e==='T+'?'Time-out nostro':e==='T-'?'Time-out avversario':e.startsWith('S:')?(([o,n])=>`Cambio: entra ${scName(n)}, esce ${scName(o)}`)(e.slice(2).split('>'))
+const scEvTxt=(r,e)=>e==='Y+'?'Punteggio corretto: +1 a noi (senza rotazione)':e==='Y-'?'Punteggio corretto: +1 a loro (senza rotazione)':e==='X+'?'Punteggio corretto: −1 a noi':e==='X-'?'Punteggio corretto: −1 a loro':e==='R+'?'Rotazione corretta: avanti di una posizione':e==='R-'?'Rotazione corretta: indietro di una posizione':e.startsWith('L:')?`Cambio libero: entra ${scNum(r,e.slice(2))} ${scName(e.slice(2))}`:e==='P+'?'Punto nostro':e==='P-'?'Punto avversario':e==='T+'?'Time-out nostro':e==='T-'?'Time-out avversario':e.startsWith('S:')?(([o,n])=>`Cambio: entra ${scName(n)}, esce ${scName(o)}`)(e.slice(2).split('>'))
   :(([id,fv])=>`${scNum(r,id)} ${scName(id)} · ${(SC_F.find(f=>f[0]===fv[0])||['',''])[1]} ${fv[1]} ${scVL(fv[0],fv[1])[0]}${scDirTxt(scDirOf(fv))}`)(e.split('.'));
 V.scout={html(){const r=scRec(UI.scout),m=S.matches.find(x=>x.id===r.matchId),t=teamOf(r.teamId),cs=canScout(m||r),w=cs&&!r.fine&&scMine(r),rapida=!!UI.sc.rapida;
   const sets=scSets(r),i=r.sets.length-1,x=sets[i],st=r.sets[i],won=sets.slice(0,i).filter(s=>s.us>s.them).length,lost=i-won;
@@ -3597,7 +3625,7 @@ V.scout={html(){const r=scRec(UI.scout),m=S.matches.find(x=>x.id===r.matchId),t=
     :`<p class="hint sc-help">Tocca un'atleta, poi fondamentale e valutazione.${next.length?` Prossima azione probabile: <b>${next.map(f=>FL[f].toLowerCase()).join(' o ')}</b>.`:''}${cand.length?' In evidenza gli attaccanti probabili.':''}</p>`)
     +`<div class="sc-dock"><div class="sc-last ${last?'':'none'}"><span>${last?'✓ '+esc(scEvTxt(r,last)):'Nessuna azione nel set'}</span><button type="button" class="btn sm" data-act="scUndo" ${st.ev.length||UI.sc.pend?'':'disabled'}>↶ Annulla</button></div>
     <div class="sc-pts"><button type="button" class="btn sc-plus" data-act="scPt" data-id="1">+1 Noi</button><button type="button" class="btn sc-minus" data-act="scPt" data-id="0">+1 Loro</button></div></div>
-    <div class="sc-quick"><button type="button" class="btn" data-act="scTo" data-id="1">Time-out noi</button><button type="button" class="btn" data-act="scTo" data-id="0">Time-out loro</button><button type="button" class="btn" data-act="scSub">Cambio</button><button type="button" class="btn" data-act="scSit">Situazione</button><button type="button" class="btn" data-act="scMinus" data-id="1" ${x.us?'':'disabled'} title="Toglie un punto a noi senza cambiare battuta e rotazione">−1 Noi</button><button type="button" class="btn" data-act="scMinus" data-id="0" ${x.them?'':'disabled'} title="Toglie un punto a loro senza cambiare battuta e rotazione">−1 Loro</button><button type="button" class="btn" data-act="scRot" data-id="1" title="Fa girare la squadra di una posizione, senza punto: per correggere la rotazione">Ruota avanti ↻</button><button type="button" class="btn" data-act="scRot" data-id="0" title="Riporta la squadra indietro di una posizione, senza punto">Ruota indietro ↺</button>${r.liberi.length>1?(o=>`<button type="button" class="btn" data-act="scLib" title="Scambia il libero in campo con l'altro libero">Cambia libero: entra ${esc(scNum(r,o))}</button>`)(r.liberi.find(id=>id!==x.lib)||r.liberi[1]):''}${x.over?'':`<button type="button" class="btn danger" data-act="scEnd">Fine partita</button>`}</div>`
+    <div class="sc-quick">${[[1,'noi'],[0,'loro']].map(([k,l])=>`<button type="button" class="btn" data-act="scTo" data-id="${k}" ${x.to[k?0:1]>=SC_MAXTO?'disabled':''}>Time-out ${l} <span class="meta">${x.to[k?0:1]}/${SC_MAXTO}</span></button>`).join('')}<button type="button" class="btn" data-act="scSub">Cambi <span class="meta">${scCambi(st)}/${SC_MAXCAMBI}</span></button><button type="button" class="btn" data-act="scSit">Situazione</button><button type="button" class="btn" data-act="scFix" title="Punteggio e rotazione corretti a mano">Correggi</button>${x.over?'':`<button type="button" class="btn danger" data-act="scEnd">Fine partita</button>`}</div>`
    :`<div class="actions">${r.fine&&canScout(m||r)?`<button type="button" class="btn" data-act="scReopen" data-id="${r.matchId}">Riapri lo scout</button>`:''}</div>`}
   <section class="panel sc-log"><div class="panel-h"><h2>${UI.sc.allLog?'Azioni del set':'Ultime azioni'}</h2><span class="count">set ${i+1}</span></div><div class="list">${st.ev.map((e,k)=>[e,k]).slice(UI.sc.allLog?0:-10).reverse().map(([e,k])=>w?`<button type="button" class="li sc-evb" data-act="scEv" data-id="${k}"><span>${esc(scEvTxt(r,e))}</span><span class="meta">modifica</span></button>`:`<div class="li">${esc(scEvTxt(r,e))}</div>`).join('')||'<div class="empty">Nessuna azione nel set.</div>'}</div>
   ${st.ev.length>10?`<div class="sc-logf"><button type="button" class="btn sm" data-act="scAllLog">${UI.sc.allLog?'Solo le ultime 10':`Tutte le azioni del set (${st.ev.length})`}</button></div>`:''}</section>
@@ -3990,8 +4018,9 @@ const ACT={
     if(UI.sc.dir&&((f==='B'&&v!=='=')||(f==='A'&&!'=/'.includes(v)))){UI.sc.pend={id:p,f,v,from:f==='A'?scFrom(scRec(UI.scout),p):null};UI.sc.scroll=true;render();return}
     scPush(`${p}.${id}`)},
   scPt:(el,id)=>scPush(id==='1'?'P+':'P-'),scTo:(el,id)=>{scPush(id==='1'?'T+':'T-');scSituazione(scRec(UI.scout),true)},
-  scSit:()=>scSituazione(scRec(UI.scout)),scRot:(el,id)=>scPush(id==='1'?'R+':'R-'),scMinus:(el,id)=>scPush(id==='1'?'X+':'X-'),
-  scLib:()=>{const r=scRec(UI.scout);if(!r)return;const x=scReplay(scCur(r),r.sets.length-1,r),o=r.liberi.find(id=>id!==x.lib);if(o)scPush('L:'+o)},scEv:(el,id)=>formScoutEv(scRec(UI.scout),+id),scAllLog:()=>{UI.sc.allLog=!UI.sc.allLog;render()},
+  scSit:()=>scSituazione(scRec(UI.scout)),scFix:()=>formScoutFix(scRec(UI.scout)),
+  scRot:(el,id)=>{scPush(id==='1'?'R+':'R-');scFixRefresh()},scMinus:(el,id)=>{scPush(id==='1'?'X+':'X-');scFixRefresh()},scPlusF:(el,id)=>{scPush(id==='1'?'Y+':'Y-');scFixRefresh()},
+  scLib:()=>{const r=scRec(UI.scout);if(!r||!scMine(r))return;const x=scReplay(scCur(r),r.sets.length-1,r),o=r.liberi.find(id=>id!==x.lib);if(!o)return;closeDrawer();scPush('L:'+o);toast(`Entra il libero ${scNum(r,o)} ${scName(o)}`)},scEv:(el,id)=>formScoutEv(scRec(UI.scout),+id),scAllLog:()=>{UI.sc.allLog=!UI.sc.allLog;render()},
   scLibC:()=>{const r=scRec(UI.scout);if(!r||!scMine(r))return;r.libC=!r.libC;UI.sc.sel=null;scSave(r)},
   scUndo:()=>{if(UI.sc.pend){UI.sc.pend=null;render();return}const st=scCur(scRec(UI.scout));if(st?.ev.length){st.ev.pop();scSave(scRec(UI.scout))}},
   scSub:()=>formScoutSub(scRec(UI.scout)),scNext:()=>formScoutSet(scRec(UI.scout)),
