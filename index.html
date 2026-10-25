@@ -451,7 +451,7 @@ table.perm td,table.perm th{vertical-align:top}
 #spChk .list .li,.drawer .sp-dl+h3+.list .li{padding:6px 0}
 
 /* scout: pulsanti grandi, pensati per il telefono a bordo campo */
-.sc{display:grid;gap:12px;max-width:760px}
+.sc{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;max-width:760px} /* la colonna non si allarga oltre lo schermo per un testo lungo */
 .sc-top{display:flex;align-items:center;gap:10px}
 .sc-top .grow{flex:1;min-width:0}
 .sc-score{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;background:var(--side);color:var(--side-hi);border-radius:12px;padding:10px 14px}
@@ -560,7 +560,7 @@ table.perm td,table.perm th{vertical-align:top}
 /* ultima azione e punti sempre a portata di pollice: fissi in basso mentre si scorre */
 .sc{--dock-h:120px}
 .sc-eval,.sc-dir{scroll-margin-bottom:calc(var(--dock-h) + 12px)}
-.sc-dock{position:sticky;bottom:0;z-index:5;display:grid;gap:6px;padding:8px;margin:0 -8px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 -6px 18px rgba(15,28,46,.10)}
+.sc-dock{position:sticky;bottom:0;z-index:5;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:8px;margin:0 -8px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 -6px 18px rgba(15,28,46,.10)}
 .sc-last{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;min-height:32px}
 .sc-last span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sc-last.none span{color:var(--muted);font-weight:500}
@@ -809,6 +809,17 @@ tr.mute td{opacity:.55}
 .sc-mom{margin:0}
 .sc-mom figcaption{font-size:12px;font-weight:600;color:var(--muted)}
 .sc-dist>div{min-width:0;overflow-x:auto}
+/* scout: punteggio sempre in vista mentre si scorre (sul telefono sotto la barra in alto, più compatto) */
+.sc-score{position:sticky;top:0;z-index:6;box-shadow:0 6px 16px rgba(6,12,22,.18)}
+.sc-eval,.sc-dir{scroll-margin-top:110px}
+@media (max-width:860px){
+  .sc-score{top:calc(54px + env(safe-area-inset-top,0px));padding:6px 12px}
+  .sc-score .sc-side b{font-size:40px}
+  .sc-score .sc-mid b{font-size:20px}
+  .sc-eval,.sc-dir{scroll-margin-top:calc(140px + env(safe-area-inset-top,0px))}
+}
+/* etichette lunghe (squadra · ruolo) vanno a capo invece di allargare la pagina sul telefono */
+.chips .chip{white-space:normal;max-width:100%}
 </style>
 </head>
 <body class="boot">
@@ -3393,14 +3404,19 @@ const scTarget=i=>i>=4?15:25;
 const SC_MIR=new Set(['usB#|themR=','themB#|usR=','themA/|usM#','themA#|usM=','themA#|usD=','usA#|themD=']);
 const scMir=(a,b)=>!!a&&(SC_MIR.has(a+'|'+b)||SC_MIR.has(b+'|'+a));
 /* rilettura di un set: punteggio, battuta, rotazione, statistiche per rotazione */
-function scReplay(st,i,r){let us=0,them=0,serve=!!st.serve,rot=0,fresh=true,last='',lastT='',lastId='',q='T',close=null,run=0;const to=[0,0];
+function scReplay(st,i,r){let us=0,them=0,serve=!!st.serve,rot=0,fresh=true,last='',lastT='',lastId='',q='T',close=null,run=0,lib=r?.liberi?.[0]||null;const to=[0,0];
   const line=[...st.start],so={},bp={},rf={},dist={},rows=[],seq=[],pt={att:0,muro:0,ace:0,avv:0,err:0,loro:0};
   const P0=(r?.palleggiatori||[]).map(id=>st.start.indexOf(id)).find(k=>k>=0);
-  const pos=()=>P0==null?null:((P0-rot)%6+6)%6,P=()=>P0==null?rot%6+1:pos()+1;
+  const pos=()=>P0==null?null:((P0-rot)%6+6)%6,P=()=>P0==null?(rot%6+6)%6+1:pos()+1;
   for(const e of st.ev){let p=0;
     if(e==='P+'){p=1;pt.avv++;close=null}else if(e==='P-'){p=-1;pt.loro++;close=null}
     else if(e.startsWith('S:')){const[o,n]=e.slice(2).split('>'),k=line.indexOf(o);if(k>=0)line[k]=n;continue}
     else if(e[0]==='T'){to[e==='T+'?0:1]++;continue}
+    /* rotazione corretta a mano (senza punto) e cambio del libero in campo */
+    else if(e==='R+'||e==='R-'){if(e==='R+'){rot++;line.push(line.shift())}else{rot--;line.unshift(line.pop())}continue}
+    else if(e.startsWith('L:')){lib=e.slice(2);continue}
+    /* punto tolto a mano: cambia solo il punteggio, non battuta né rotazione */
+    else if(e==='X+'||e==='X-'){if(e==='X+')us=Math.max(0,us-1);else them=Math.max(0,them-1);seq.push([us,them]);continue}
     else{const[id,fv='']=e.split('.'),f=fv[0],v=fv[1],d=scDirOf(fv),k=P(),T=scIsO(id)?'them':'us',key=T+f+v,mir=scMir(close,key);close=null;
       if(T==='us'){const R=rf[k]=rf[k]||{},c=R[f]=R[f]||{n:0};c.n++;c[v]=(c[v]||0)+1;
         /* distribuzione: a chi va l'attacco, per rotazione e qualità dell'azione che lo precede */
@@ -3417,12 +3433,12 @@ function scReplay(st,i,r){let us=0,them=0,serve=!!st.serve,rot=0,fresh=true,last
     run=p>0?Math.max(run,0)+1:Math.min(run,0)-1;seq.push([us,them]);
     fresh=true;last='';lastT='';lastId='';q='T'}
   const t=scTarget(i),over=(us>=t||them>=t)&&Math.abs(us-them)>=2;
-  return{us,them,serve,rot:P(),line,field:scField(r,line,serve),seq,so,bp,rf,dist,rows,pt,fresh,last,lastT,lastId,over,to,run,setter:pos()==null?null:line[pos()]}}
+  return{us,them,serve,rot:P(),line,field:scField(r,line,serve,lib),lib,seq,so,bp,rf,dist,rows,pt,fresh,last,lastT,lastId,over,to,run,setter:pos()==null?null:line[pos()]}}
 /* libero al posto del centrale in seconda linea (r.libC): il centrale batte in zona 1, il libero entra quando perdiamo
    la battuta, resta in zona 6 e 5 ed esce quando quel posto torna in prima linea (zona 4); poi lo stesso con l'altro centrale.
    Non è un cambio: si ricava dalla rotazione (line resta con i sei titolari, field è chi è davvero in campo) */
 const scCentr=id=>/centr/i.test(scAth(id)?.ruolo||'');
-function scField(r,line,serve){const lib=r?.libC&&r.liberi?.[0];if(!lib||line.includes(lib))return line;
+function scField(r,line,serve,active=r?.liberi?.[0]){const lib=r?.libC&&active;if(!lib||line.includes(lib))return line;
   const k=line.findIndex((id,k)=>scCentr(id)&&(k===4||k===5||(k===0&&!serve)));
   if(k<0)return line;const f=[...line];f[k]=lib;return f}
 function scSets(r){return r.sets.map((st,i)=>scReplay(st,i,r))}
@@ -3558,7 +3574,7 @@ function scSituazione(r,to){if(!r)return;const sets=scSets(r),i=r.sets.length-1,
   ${rot?`<p class="hint">Rotazione più difficile nel set: <b>P${rot.k}</b>, ${rot.w} punt${rot.w===1?'o':'i'} su ${rot.n} scambi.</p>`:''}
   <h3 style="margin:14px 0 6px">Attacco nel set</h3>${att.length?`<div class="summary">${att.map(([id,c])=>`<span>${esc(scNum(r,id)+' '+scName(id))} <b class="num">${c.n}</b> <span class="meta">eff ${scEff(c,'A')}</span></span>`).join('')}</div>`:'<p class="hint">Nessun attacco nel set.</p>'}
   <h3 style="margin:14px 0 6px">Errori nel set</h3>${err.length?`<div class="summary">${err.map(([id,c])=>`<span>${esc(scNum(r,id)+' '+scName(id))} <b class="num sc-err">${c.n}</b> <span class="meta">${Object.entries(c.f).map(([f,n])=>SH[f]+' '+n).join(' · ')}</span></span>`).join('')}</div>`:'<p class="hint">Nessun errore nel set.</p>'}`)}
-const scEvTxt=(r,e)=>e==='P+'?'Punto nostro':e==='P-'?'Punto avversario':e==='T+'?'Time-out nostro':e==='T-'?'Time-out avversario':e.startsWith('S:')?(([o,n])=>`Cambio: entra ${scName(n)}, esce ${scName(o)}`)(e.slice(2).split('>'))
+const scEvTxt=(r,e)=>e==='X+'?'Punteggio corretto: −1 a noi':e==='X-'?'Punteggio corretto: −1 a loro':e==='R+'?'Rotazione corretta: avanti di una posizione':e==='R-'?'Rotazione corretta: indietro di una posizione':e.startsWith('L:')?`Cambio libero: entra ${scNum(r,e.slice(2))} ${scName(e.slice(2))}`:e==='P+'?'Punto nostro':e==='P-'?'Punto avversario':e==='T+'?'Time-out nostro':e==='T-'?'Time-out avversario':e.startsWith('S:')?(([o,n])=>`Cambio: entra ${scName(n)}, esce ${scName(o)}`)(e.slice(2).split('>'))
   :(([id,fv])=>`${scNum(r,id)} ${scName(id)} · ${(SC_F.find(f=>f[0]===fv[0])||['',''])[1]} ${fv[1]} ${scVL(fv[0],fv[1])[0]}${scDirTxt(scDirOf(fv))}`)(e.split('.'));
 V.scout={html(){const r=scRec(UI.scout),m=S.matches.find(x=>x.id===r.matchId),t=teamOf(r.teamId),cs=canScout(m||r),w=cs&&!r.fine&&scMine(r),rapida=!!UI.sc.rapida;
   const sets=scSets(r),i=r.sets.length-1,x=sets[i],st=r.sets[i],won=sets.slice(0,i).filter(s=>s.us>s.them).length,lost=i-won;
@@ -3581,7 +3597,7 @@ V.scout={html(){const r=scRec(UI.scout),m=S.matches.find(x=>x.id===r.matchId),t=
     :`<p class="hint sc-help">Tocca un'atleta, poi fondamentale e valutazione.${next.length?` Prossima azione probabile: <b>${next.map(f=>FL[f].toLowerCase()).join(' o ')}</b>.`:''}${cand.length?' In evidenza gli attaccanti probabili.':''}</p>`)
     +`<div class="sc-dock"><div class="sc-last ${last?'':'none'}"><span>${last?'✓ '+esc(scEvTxt(r,last)):'Nessuna azione nel set'}</span><button type="button" class="btn sm" data-act="scUndo" ${st.ev.length||UI.sc.pend?'':'disabled'}>↶ Annulla</button></div>
     <div class="sc-pts"><button type="button" class="btn sc-plus" data-act="scPt" data-id="1">+1 Noi</button><button type="button" class="btn sc-minus" data-act="scPt" data-id="0">+1 Loro</button></div></div>
-    <div class="sc-quick"><button type="button" class="btn" data-act="scTo" data-id="1">Time-out noi</button><button type="button" class="btn" data-act="scTo" data-id="0">Time-out loro</button><button type="button" class="btn" data-act="scSub">Cambio</button><button type="button" class="btn" data-act="scSit">Situazione</button>${x.over?'':`<button type="button" class="btn danger" data-act="scEnd">Fine partita</button>`}</div>`
+    <div class="sc-quick"><button type="button" class="btn" data-act="scTo" data-id="1">Time-out noi</button><button type="button" class="btn" data-act="scTo" data-id="0">Time-out loro</button><button type="button" class="btn" data-act="scSub">Cambio</button><button type="button" class="btn" data-act="scSit">Situazione</button><button type="button" class="btn" data-act="scMinus" data-id="1" ${x.us?'':'disabled'} title="Toglie un punto a noi senza cambiare battuta e rotazione">−1 Noi</button><button type="button" class="btn" data-act="scMinus" data-id="0" ${x.them?'':'disabled'} title="Toglie un punto a loro senza cambiare battuta e rotazione">−1 Loro</button><button type="button" class="btn" data-act="scRot" data-id="1" title="Fa girare la squadra di una posizione, senza punto: per correggere la rotazione">Ruota avanti ↻</button><button type="button" class="btn" data-act="scRot" data-id="0" title="Riporta la squadra indietro di una posizione, senza punto">Ruota indietro ↺</button>${r.liberi.length>1?(o=>`<button type="button" class="btn" data-act="scLib" title="Scambia il libero in campo con l'altro libero">Cambia libero: entra ${esc(scNum(r,o))}</button>`)(r.liberi.find(id=>id!==x.lib)||r.liberi[1]):''}${x.over?'':`<button type="button" class="btn danger" data-act="scEnd">Fine partita</button>`}</div>`
    :`<div class="actions">${r.fine&&canScout(m||r)?`<button type="button" class="btn" data-act="scReopen" data-id="${r.matchId}">Riapri lo scout</button>`:''}</div>`}
   <section class="panel sc-log"><div class="panel-h"><h2>${UI.sc.allLog?'Azioni del set':'Ultime azioni'}</h2><span class="count">set ${i+1}</span></div><div class="list">${st.ev.map((e,k)=>[e,k]).slice(UI.sc.allLog?0:-10).reverse().map(([e,k])=>w?`<button type="button" class="li sc-evb" data-act="scEv" data-id="${k}"><span>${esc(scEvTxt(r,e))}</span><span class="meta">modifica</span></button>`:`<div class="li">${esc(scEvTxt(r,e))}</div>`).join('')||'<div class="empty">Nessuna azione nel set.</div>'}</div>
   ${st.ev.length>10?`<div class="sc-logf"><button type="button" class="btn sm" data-act="scAllLog">${UI.sc.allLog?'Solo le ultime 10':`Tutte le azioni del set (${st.ev.length})`}</button></div>`:''}</section>
@@ -3684,7 +3700,7 @@ function scDistHtml(r,sets){const dist={};sets.forEach(x=>Object.entries(x.dist)
   const so=k=>{const A={};['Rb','Rs'].forEach(q=>Object.entries(dist[k]?.[q]||{}).forEach(([id,c])=>{A[id]=(A[id]||0)+c.n}));const t=Object.values(A).reduce((s,x)=>s+x,0);
     return t?Object.entries(A).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([id,n])=>`${esc(scName(id))} ${scPct(n,t)}`).join(' · '):'—'};
   return`<div class="sc-dist">${SC_Q.map(([q,l])=>`<div><h4>${l}</h4><table class="sc-tab"><thead><tr><th>Attaccante</th><th>Palle</th><th>%</th><th>Eff</th></tr></thead><tbody>${tab(byQ(q))}</tbody></table></div>`).join('')}</div>
-  <table class="sc-tab" style="margin-top:8px"><thead><tr><th>Rotazione</th><th>A chi va la palla dopo la ricezione</th></tr></thead><tbody>${[1,6,5,4,3,2].map(k=>`<tr><td><b>P${k}</b></td><td style="text-align:left">${so(k)}</td></tr>`).join('')}</tbody></table>`}
+  <div class="sc-tw"><table class="sc-tab" style="margin-top:8px"><thead><tr><th>Rotazione</th><th>A chi va la palla dopo la ricezione</th></tr></thead><tbody>${[1,6,5,4,3,2].map(k=>`<tr><td><b>P${k}</b></td><td style="text-align:left">${so(k)}</td></tr>`).join('')}</tbody></table></div>`}
 /* indicatori di squadra di una partita, come conteggi (si sommano tra partite) e percentuali */
 const SC_GOALS=[['rpos','Ricezione positiva'],['aeff','Efficienza attacco'],['beff','Efficienza battuta'],['so','Cambio palla'],['bp','Break']];
 function scRaw(r){const sets=scSets(r),P=scStats(r),tot={};r.roster.forEach(id=>Object.entries(P[id]||{}).forEach(([f,c])=>{const T=tot[f]=tot[f]||{n:0};Object.entries(c).forEach(([k,v])=>T[k]=(T[k]||0)+v)}));
@@ -3974,7 +3990,8 @@ const ACT={
     if(UI.sc.dir&&((f==='B'&&v!=='=')||(f==='A'&&!'=/'.includes(v)))){UI.sc.pend={id:p,f,v,from:f==='A'?scFrom(scRec(UI.scout),p):null};UI.sc.scroll=true;render();return}
     scPush(`${p}.${id}`)},
   scPt:(el,id)=>scPush(id==='1'?'P+':'P-'),scTo:(el,id)=>{scPush(id==='1'?'T+':'T-');scSituazione(scRec(UI.scout),true)},
-  scSit:()=>scSituazione(scRec(UI.scout)),scEv:(el,id)=>formScoutEv(scRec(UI.scout),+id),scAllLog:()=>{UI.sc.allLog=!UI.sc.allLog;render()},
+  scSit:()=>scSituazione(scRec(UI.scout)),scRot:(el,id)=>scPush(id==='1'?'R+':'R-'),scMinus:(el,id)=>scPush(id==='1'?'X+':'X-'),
+  scLib:()=>{const r=scRec(UI.scout);if(!r)return;const x=scReplay(scCur(r),r.sets.length-1,r),o=r.liberi.find(id=>id!==x.lib);if(o)scPush('L:'+o)},scEv:(el,id)=>formScoutEv(scRec(UI.scout),+id),scAllLog:()=>{UI.sc.allLog=!UI.sc.allLog;render()},
   scLibC:()=>{const r=scRec(UI.scout);if(!r||!scMine(r))return;r.libC=!r.libC;UI.sc.sel=null;scSave(r)},
   scUndo:()=>{if(UI.sc.pend){UI.sc.pend=null;render();return}const st=scCur(scRec(UI.scout));if(st?.ev.length){st.ev.pop();scSave(scRec(UI.scout))}},
   scSub:()=>formScoutSub(scRec(UI.scout)),scNext:()=>formScoutSet(scRec(UI.scout)),
