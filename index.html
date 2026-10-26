@@ -823,6 +823,22 @@ tr.mute td{opacity:.55}
 .sc-libsw{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
 .sc-fix{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .sc-fix .btn{justify-content:center;padding:12px 8px}
+/* quote in rate, invio guidato, avvisi ai sostituti */
+.q-rate{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;font-size:13px}
+.q-rate>span:first-child{font-weight:600}
+.q-rate label{display:inline-flex;gap:6px;align-items:center}
+.q-rate input{font:inherit;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)}
+.q-rate .hint{flex-basis:100%;margin:0}
+.q-exc{color:var(--accent)}
+.li.com-sent{background:var(--ok-soft)}
+.avv-row{display:grid;gap:6px;padding:10px 0;border-bottom:1px solid var(--line)}
+.avv-row:last-of-type{border-bottom:0}
+.avv-row .actions{margin:0;flex-wrap:wrap}
+.q-opt{display:grid;gap:6px}
+.q-optr{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:9px 12px;cursor:pointer;font-size:14px}
+.q-optr:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.q-optr input{margin-top:3px}
+.q-optr small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 </style>
 </head>
 <body class="boot">
@@ -1297,7 +1313,23 @@ const teamOf=id=>S.teams.find(t=>t.id===id);
 const staffOf=id=>S.staff.find(p=>p.id===id);
 const isGiov=a=>a.teams.some(id=>teamOf(id)?.giovanile);
 function visita(a){const s=a.visita?.scadenza;if(!s)return{k:'crit',t:'Mancante',d:-1e9};const d=daysTo(s);if(d<0)return{k:'crit',t:`Scaduta da ${-d} gg`,d};if(d<=30)return{k:'warn',t:`Scade tra ${d} gg`,d};return{k:'ok',t:'Valida',d}}
-function quota(a){if(!isGiov(a))return null;const imp=+a.quota?.importo||0;const v=(a.quota?.pagamenti||[]).reduce((s,p)=>s+(+p.importo||0),0);const r=Math.max(0,imp-v);return{imp,v,r,k:r<=0?'ok':v>0?'warn':'crit',t:r<=0?'Saldata':v>0?'Parziale':'Da versare'}}
+/* quota in rate: due scadenze uguali per tutte le squadre (S.settings.rate = {s1, s2}), ciascuna metà della quota, con i centesimi.
+   Eccezioni per atleta in a.quota.piano: {tipo:'unica', scadenza} oppure {tipo:'pers', rate:[{importo, scadenza}, …]}.
+   I pagamenti coprono le rate in ordine. Senza scadenze impostate la quota resta una rata unica senza data, come prima.
+   Stato a oggi: Saldata, rata scaduta (non coperta e scaduta), in scadenza (entro QUOTA_PRESTO giorni), in regola */
+const QUOTA_PRESTO=30,cent=x=>Math.round(x*100)/100;
+const rataN=(n,tot)=>tot===1?'quota':`${n}ª rata`;
+function rateOf(a,imp){const p=a.quota?.piano,R=S.settings?.rate||{};
+  if(p?.tipo==='unica')return[{importo:imp,scadenza:p.scadenza||''}];
+  if(p?.tipo==='pers'&&p.rate?.length)return p.rate.map(x=>({importo:cent(+x.importo||0),scadenza:x.scadenza||''}));
+  if(!R.s1&&!R.s2)return[{importo:imp,scadenza:''}];
+  const h=cent(imp/2);return[{importo:h,scadenza:R.s1||R.s2},{importo:cent(imp-h),scadenza:R.s2||R.s1}]}
+function quota(a){if(!isGiov(a))return null;const imp=+a.quota?.importo||0;const v=(a.quota?.pagamenti||[]).reduce((s,p)=>s+(+p.importo||0),0);const r=cent(Math.max(0,imp-v));
+  let rest=v;const L=rateOf(a,imp),rate=L.map((x,i)=>{const c=Math.max(0,Math.min(rest,x.importo));rest=cent(rest-c);return{...x,n:i+1,lab:rataN(i+1,L.length),coperto:cent(c),manca:cent(x.importo-c)}});
+  const open=rate.filter(x=>x.manca>0&&x.scadenza),late=open.find(x=>x.scadenza<TODAY_ISO)||null,soon=late?null:open.find(x=>daysTo(x.scadenza)<=QUOTA_PRESTO)||null;
+  const scad=cent(open.filter(x=>x.scadenza<TODAY_ISO).reduce((s,x)=>s+x.manca,0)),dated=rate.some(x=>x.scadenza);
+  const[k,tt]=r<=0?['ok','Saldata']:late?['crit',`${late.lab[0].toUpperCase()+late.lab.slice(1)} scaduta`]:soon?['warn',`${soon.lab[0].toUpperCase()+soon.lab.slice(1)} in scadenza`]:dated?['ok','In regola']:v>0?['warn','Parziale']:['crit','Da versare'];
+  return{imp,v,r,k,t:tt,rate,late,soon,scad,dated,next:late||soon||open[0]||null}}
 const pill=(k,t)=>`<span class="pill ${k}">${esc(t)}</span>`;
 const chip=t=>t?`<span class="chip"><i style="background:${esc(t.colore)}"></i>${esc(t.sigla)}</span>`:'';
 const digits=c=>String(c||'').replace(/\D/g,'');
@@ -1456,6 +1488,10 @@ function seed(){
     scout:[],avversari:[],utenti:[{id:'u1',email:'carla.neri@esempio.it',ruolo:'giovanile',teams:[],nome:'Carla Neri'}]};
   const imp=buildImport(sampleFipav(s));
   applyImport(s,parseImport(imp,s.teams),'replace');
+  /* quota in due rate: la prima già scaduta, così si vedono solleciti e rate scadute; un allenatore sostituito da avvisare */
+  s.settings.rate={s1:iso(addDays(TODAY,-15)),s2:iso(addDays(TODAY,75))};
+  const m0=s.matches.filter(m=>m.data>=TODAY_ISO).sort(byWhen).find(m=>s.teams.find(t=>t.id===m.teamId)?.staff?.allenatore);
+  if(m0){const c0=s.teams.find(t=>t.id===m0.teamId).staff.allenatore,alt=s.staff.find(p=>p.id!==c0&&s.teams.some(t=>t.staff?.allenatore===p.id));if(alt)m0.staffGara={allenatore:alt.id}}
   return s;
 }
 
@@ -2116,8 +2152,12 @@ function todoManage(){const L=[],A=S.athletes;
     L.push({k:'warn',ic:'cal',t:`${plur(n,'sovrapposizione','sovrapposizioni')} nel calendario delle gare`,s:`La prima ${fmtDow(f.d)}: ${esc(sigle(f.x).replace(', ',' e '))}`,b:{act:'nav',id:'partite',l:'Risolvi'}})}
   const sc=slotConflicts();
   if(sc.length)L.push({k:'warn',ic:'gym',t:`${plur(sc.length,'sovrapposizione','sovrapposizioni')} tra allenamenti`,s:`${DAYS_FULL[sc[0].a.giorno]}: ${esc(sigle([sc[0].a,sc[0].b]).replace(', ',' e '))}`,b:{act:'nav',id:'palestre',l:'Vedi'}});
-  if(canQuote()){const qs=A.map(quota).filter(Boolean),op=qs.filter(q=>q.r>0);
-    if(op.length)L.push({k:'warn',ic:'euro',t:plur(op.length,'quota da incassare','quote da incassare'),s:`${eur(op.reduce((s,q)=>s+q.r,0))} su ${eur(qs.reduce((s,q)=>s+q.imp,0))} attesi`,b:{act:'nav',id:'quote',l:'Vedi quote'}})}
+  if(canQuote()){const qs=A.map(quota).filter(Boolean),op=qs.filter(q=>q.r>0),lt=qs.filter(q=>q.late),sn=qs.filter(q=>q.soon);
+    if(lt.length)L.push({k:'crit',ic:'euro',t:plur(lt.length,'rata scaduta','rate scadute'),s:`${eur(cent(lt.reduce((s,q)=>s+q.scad,0)))} da incassare${sn.length?` · altre ${sn.length} in scadenza entro ${QUOTA_PRESTO} giorni`:''}`,b:{act:'quoteF',id:'late',l:'Vedi e sollecita',pri:1}});
+    else if(sn.length)L.push({k:'warn',ic:'euro',t:plur(sn.length,'rata in scadenza','rate in scadenza'),s:`Entro ${QUOTA_PRESTO} giorni · ${eur(cent(sn.reduce((s,q)=>s+q.soon.manca,0)))}`,b:{act:'quoteF',id:'soon',l:'Vedi'}});
+    else if(op.length)L.push({k:qs.some(q=>q.dated)?'info':'warn',ic:'euro',t:plur(op.length,'quota da incassare','quote da incassare'),s:`${eur(op.reduce((s,q)=>s+q.r,0))} su ${eur(qs.reduce((s,q)=>s+q.imp,0))} attesi`,b:{act:'nav',id:'quote',l:'Vedi quote'}})}
+  const sd=sostList().filter(s=>!s.ok&&canEdit('matches',s.m));
+  if(sd.length){const s=sd[0];L.push({k:'warn',ic:'cal',t:plur(sd.length,'sostituto da avvisare','sostituti da avvisare'),s:`Nei prossimi ${SOST_GG} giorni · il primo ${fmtDow(s.m.data)}: ${esc(sostName(s))} (${esc(teamOf(s.m.teamId)?.sigla||'')})`,b:{act:'sostDa',l:'Vedi',pri:1}})}
   const pend=S.matches.filter(m=>spPending(m)&&!canApprove(m));
   if(pend.length)L.push({k:'info',ic:'clock',t:plur(pend.length,'richiesta di spostamento in attesa','richieste di spostamento in attesa'),s:'Le approva la segreteria competente',b:{act:'nav',id:'richieste',l:'Apri'}});
   return L}
@@ -2135,6 +2175,11 @@ function todoTeam(){const T=ME?.workTeams||[],L=[],mine=x=>T.includes(x.teamId);
   S.matches.filter(m=>mine(m)&&spPending(m)).sort(byWhen).slice(0,3).forEach(m=>{const sp=m.spostamento;
     L.push({k:canApprove(m)?'crit':'info',ic:'clock',t:`Spostamento ${esc(teamOf(m.teamId)?.sigla||'')} ${canApprove(m)?'da approvare':'in attesa'}`,s:`${fmtDow(m.data)} → ${fmtDow(sp.al.data)} ore ${esc(sp.al.ora)}${canApprove(m)?'':': lo approva la segreteria'}`,b:{act:'spView',id:m.id,l:'Apri'}})});
   if(inS.length)L.push({k:'warn',ic:'med',t:plur(inS.length,'certificato in scadenza','certificati in scadenza'),s:esc(inS.slice(0,3).map(fullName).join(', '))+(inS.length>3?'…':''),b:{act:'flag',id:'visita',l:'Vedi'}});
+  /* gare in cui la persona sostituisce un collega o è sostituita */
+  const mine2=new Set(ME?.staffIds||[]);
+  sostList().forEach(s=>{const sq=esc(teamOf(s.m.teamId)?.sigla||''),ro=s.r==='allenatore'?'alleni':'sei secondo allenatore di';
+    if(mine2.has(s.id))L.push({k:'info',ic:'cal',t:`${dayLbl(s.m.data)} ore ${esc(s.m.ora)}: ${ro} ${sq} al posto di ${esc(s.tit?fullName(s.tit):'—')}`,s:esc(garaTxt(s.m)),b:{act:'editMatch',id:s.m.id,l:'Apri'}});
+    else if(s.tit&&mine2.has(s.tit.id))L.push({k:'info',ic:'cal',t:`${dayLbl(s.m.data)} ore ${esc(s.m.ora)}: ti sostituisce ${esc(s.p?fullName(s.p):'—')} in ${sq}`,s:esc(garaTxt(s.m)),b:{act:'editMatch',id:s.m.id,l:'Apri'}})});
   return L}
 
 /* prossimo allenamento delle squadre indicate, da adesso in avanti */
@@ -2253,24 +2298,45 @@ V.atleti={html(){const f=UI.fa;return head('Atleti',`Anagrafica, certificato med
 /* ---------- quote ---------- */
 V.quote={html(){
   const qs=S.athletes.map(a=>({a,q:quota(a)})).filter(x=>x.q);const att=qs.reduce((s,x)=>s+x.q.imp,0),inc=qs.reduce((s,x)=>s+Math.min(x.q.v,x.q.imp),0);
-  const pct=att?Math.round(inc/att*100):0;
-  return head('Quote di iscrizione','Dovute dagli atleti del settore giovanile. La quota proposta è quella della squadra; per chi gioca in più squadre giovanili vale la più alta.')+`
+  const pct=att?Math.round(inc/att*100):0,late=qs.filter(x=>x.q.late),scad=cent(qs.reduce((s,x)=>s+x.q.scad,0)),R=S.settings.rate||{};
+  return head('Quote di iscrizione','Dovute dagli atleti del settore giovanile, in due rate uguali con le scadenze qui sotto. La quota proposta è quella della squadra; per chi gioca in più squadre giovanili vale la più alta.')+`
   <section class="panel" style="margin-bottom:16px"><div class="panel-b" style="display:grid;gap:10px">
-    <div class="summary" style="margin:0"><span>Atteso <b>${eur(att)}</b></span><span>Incassato <b>${eur(inc)}</b></span><span>Da incassare <b>${eur(att-inc)}</b></span><span>${qs.filter(x=>x.q.r<=0).length} saldate · ${qs.filter(x=>x.q.k==='warn').length} parziali · ${qs.filter(x=>x.q.k==='crit').length} da versare</span></div>
+    <div class="summary" style="margin:0"><span>Atteso <b>${eur(att)}</b></span><span>Incassato <b>${eur(inc)}</b></span><span>Da incassare <b>${eur(att-inc)}</b></span>${scad?`<span>Scaduto non incassato <b class="sc-err">${eur(scad)}</b> <span class="meta">${plur(late.length,'famiglia','famiglie')}</span></span>`:''}</div>
     <div class="progress" role="img" aria-label="Incassato ${pct}%"><span style="width:${pct}%"></span></div>
+    <div class="q-rate"><span>Scadenze delle rate</span><label>1ª rata entro <input type="date" data-rate="s1" value="${esc(R.s1||'')}" ${ME.admin?'':'disabled'}></label><label>2ª rata entro <input type="date" data-rate="s2" value="${esc(R.s2||'')}" ${ME.admin?'':'disabled'}></label>
+      <span class="hint">${R.s1||R.s2?'Ogni rata è metà della quota. Le eccezioni per singola atleta si impostano con «Rate» nella sua riga.':'Senza scadenze la quota è una rata unica senza data.'}${ME.admin?'':' Le scadenze le imposta l\'amministratore.'}</span></div>
   </div></section>
   <div class="filters"><select id="fq_team" data-f="fq.team" aria-label="Squadra">${teamOpts(UI.fq.team,'Tutte le squadre giovanili')}</select>
-  <select id="fq_stato" data-f="fq.stato" aria-label="Stato"><option value="">Tutti gli stati</option><option value="open" ${UI.fq.stato==='open'?'selected':''}>Da saldare</option><option value="crit" ${UI.fq.stato==='crit'?'selected':''}>Nessun versamento</option><option value="ok" ${UI.fq.stato==='ok'?'selected':''}>Saldate</option></select>
+  <select id="fq_stato" data-f="fq.stato" aria-label="Stato">${[['','Tutti gli stati'],['open','Da saldare'],['late','Rata scaduta'],['soon',`Rata in scadenza (${QUOTA_PRESTO} giorni)`],['regola','In regola'],['crit','Nessun versamento'],['ok','Saldate'],['exc','Con eccezione']].map(([k,l])=>`<option value="${k}" ${UI.fq.stato===k?'selected':''}>${l}</option>`).join('')}</select>
   <span class="sp"></span><span class="count" id="cnt"></span></div><div class="tw" id="list"></div>`},
   after(){this.list()},
   list(){const f=UI.fq;let L=S.athletes.map(a=>({a,q:quota(a)})).filter(x=>x.q&&(!f.team||x.a.teams.includes(f.team)));
-    if(f.stato==='open')L=L.filter(x=>x.q.r>0);if(f.stato==='crit')L=L.filter(x=>x.q.k==='crit');if(f.stato==='ok')L=L.filter(x=>x.q.r<=0);
-    L.sort((x,y)=>y.q.r-x.q.r||x.a.cognome.localeCompare(y.a.cognome));$('#cnt').textContent=`${L.length} atleti`;
-    $('#list').innerHTML=`<table><thead><tr><th>Atleta</th><th>Squadre</th><th>Quota</th><th>Versato</th><th>Residuo</th><th>Stato</th><th>Ultimo pagamento</th><th></th></tr></thead><tbody>${L.map(({a,q})=>{const last=(a.quota.pagamenti||[]).slice(-1)[0];const c=contactOf(a);
-      return`<tr><td><div class="who">${esc(a.cognome)} ${esc(a.nome)}</div><div class="meta">${esc(c.rif)}${c.rif!=='Atleta'?': '+esc(c.nome||''):''}</div></td><td><div class="chips">${a.teams.map(id=>chip(teamOf(id))).join('')}</div></td>
-      <td class="num">${eur(q.imp)}</td><td class="num">${eur(q.v)}</td><td class="num" style="font-weight:600">${eur(q.r)}</td><td>${pill(q.k,q.t)}</td>
+    const F={open:q=>q.r>0,late:q=>!!q.late,soon:q=>!!q.soon,regola:q=>q.r>0&&!q.late&&!q.soon&&q.dated,crit:q=>q.r>0&&q.v<=0,ok:q=>q.r<=0}[f.stato];
+    if(F)L=L.filter(x=>F(x.q));if(f.stato==='exc')L=L.filter(x=>x.a.quota?.piano);
+    L.sort((x,y)=>(y.q.scad-x.q.scad)||(y.q.r-x.q.r)||x.a.cognome.localeCompare(y.a.cognome));$('#cnt').textContent=`${L.length} atleti`;
+    const two=L.some(x=>x.q.rate.length>1);
+    const rc=x=>!x?'<td class="num"><span class="meta">—</span></td>':`<td class="num nowrap"><b>${eur(x.importo)}</b><div class="meta ${x.manca>0&&x.scadenza&&x.scadenza<TODAY_ISO?'sc-err':''}">${x.scadenza?'entro '+fmtD(x.scadenza)+' · ':''}${x.manca<=0?'pagata':x.coperto>0?'manca '+eur(x.manca):'da pagare'}</div></td>`;
+    $('#list').innerHTML=`<table><thead><tr><th>Atleta</th><th>Squadre</th><th>Quota</th>${two?'<th>1ª rata</th><th>2ª rata</th>':'<th>Rata</th>'}<th>Versato</th><th>Residuo</th><th>Stato</th><th>Ultimo pagamento</th><th></th></tr></thead><tbody>${L.map(({a,q})=>{const last=(a.quota.pagamenti||[]).slice(-1)[0];const c=contactOf(a),pl=a.quota.piano;
+      return`<tr><td><div class="who">${esc(a.cognome)} ${esc(a.nome)}</div><div class="meta">${esc(c.rif)}${c.rif!=='Atleta'?': '+esc(c.nome||''):''}</div>${pl?`<div class="meta q-exc">${pl.tipo==='unica'?'rata unica':'rate personalizzate'}</div>`:''}${a.quota.sol?`<div class="meta">sollecitato il ${fmtD(a.quota.sol)}</div>`:''}</td><td><div class="chips">${a.teams.map(id=>chip(teamOf(id))).join('')}</div></td>
+      <td class="num">${eur(q.imp)}</td>${rc(q.rate[0])}${two?rc(q.rate[1]):''}<td class="num">${eur(q.v)}</td><td class="num" style="font-weight:600">${eur(q.r)}</td><td>${pill(q.k,q.t)}${q.late?`<div class="meta sc-err">da ${plur(-daysTo(q.late.scadenza),'giorno','giorni')}</div>`:q.soon?`<div class="meta">tra ${plur(daysTo(q.soon.scadenza),'giorno','giorni')}</div>`:''}</td>
       <td class="num nowrap">${last?`${fmtD(last.data)}<div class="meta">${esc(last.metodo)} · ${eur(last.importo)}</div>`:'<span class="meta">—</span>'}</td>
-      <td><div class="contacts">${q.r>0?`<button class="btn sm" type="button" data-act="pay" data-id="${a.id}">Registra pagamento</button>`+contactBtns(c,fillTpl(TPL.quota,varsOf(a))).replace('<div class="contacts">','').replace(/<\/div>$/,''):''}</div></td></tr>`}).join('')||'<tr><td colspan="8" class="empty">Nessuna quota con questi filtri.</td></tr>'}</tbody></table>`}};
+      <td><div class="contacts">${q.r>0?`<button class="btn sm" type="button" data-act="pay" data-id="${a.id}">Registra pagamento</button>`+contactBtns(c,fillTpl(q.next?TPL.sollecitoRata:TPL.quota,varsOf(a))).replace('<a class="ico wa"',`<a data-mark="q:${a.id}" class="ico wa"`).replace('<div class="contacts">','').replace(/<\/div>$/,''):''}<button class="btn sm" type="button" data-act="rate" data-id="${a.id}">Rate</button></div></td></tr>`}).join('')||`<tr><td colspan="${two?10:9}" class="empty">Nessuna quota con questi filtri.</td></tr>`}</tbody></table>`}};
+
+/* piano delle rate di un'atleta: come la società, rata unica o rate personalizzate (importo e scadenza) */
+function formRate(a){if(!canQuote()||!canEdit('athletes',a)){toast('Non hai i permessi per modificare le quote');return}
+  const q=quota(a),p=a.quota.piano||{},R=S.settings.rate||{},pr=p.tipo==='pers'?p.rate:q.rate.length>1?q.rate:[{importo:cent(q.imp/2),scadenza:R.s1||''},{importo:cent(q.imp-cent(q.imp/2)),scadenza:R.s2||''}];
+  openDrawer('Rate · '+fullName(a),`<p style="margin-top:0">Quota <b>${eur(q.imp)}</b> · versato ${eur(q.v)} · residuo ${eur(q.r)}</p>
+  <div class="q-opt">${[['soc','Come la società',R.s1||R.s2?`Due rate da ${eur(cent(q.imp/2))}${R.s1?' entro il '+fmtD(R.s1):''}${R.s2?' e il '+fmtD(R.s2):''}`:'Scadenze della società non ancora impostate'],['unica','Rata unica','Tutta la quota entro una data'],['pers','Rate personalizzate','Importi e scadenze diversi, per esempio per fratelli o accordi particolari']].map(([k,l,s])=>`<label class="q-optr"><input type="radio" name="tipo" value="${k}" ${(p.tipo||'soc')===k?'checked':''}><span>${l}<small>${esc(s)}</small></span></label>`).join('')}</div>
+  <div class="fgrid" data-pl="unica" style="margin-top:12px">${inp('u_scad','Scadenza della rata unica',p.tipo==='unica'?p.scadenza:(R.s1||''),{type:'date'})}</div>
+  <div class="fgrid" data-pl="pers" style="margin-top:12px">${[0,1].map(i=>inp('p_imp'+i,`${i+1}ª rata (€)`,pr[i]?.importo??'',{type:'number',min:0,step:'0.01'})+inp('p_scad'+i,`Scadenza ${i+1}ª rata`,pr[i]?.scadenza||'',{type:'date'})).join('')}</div>
+  <p class="hint">Con le rate personalizzate la quota diventa la somma delle due rate. I pagamenti già registrati coprono le rate in ordine.</p>`,
+  {saveLabel:'Salva',onSave:fd=>{const k=fd.get('tipo');
+    if(k==='unica'){const s=fd.get('u_scad');if(!s){toast('Indica la scadenza della rata unica');return false}a.quota.piano={tipo:'unica',scadenza:s}}
+    else if(k==='pers'){const L=[0,1].map(i=>({importo:cent(+fd.get('p_imp'+i)||0),scadenza:fd.get('p_scad'+i)||''})).filter(x=>x.importo>0);
+      if(!L.length||L.some(x=>!x.scadenza)){toast('Indica importo e scadenza di ogni rata');return false}a.quota.piano={tipo:'pers',rate:L};a.quota.importo=cent(L.reduce((s,x)=>s+x.importo,0))}
+    else delete a.quota.piano;return'Rate aggiornate'}});
+  const upd=()=>{const k=document.querySelector('#dBody input[name="tipo"]:checked')?.value;document.querySelectorAll('#dBody [data-pl]').forEach(d=>d.hidden=d.dataset.pl!==k)};
+  document.querySelectorAll('#dBody input[name="tipo"]').forEach(r=>r.addEventListener('change',upd));upd()}
 
 /* ---------- dirigenti ---------- */
 V.dirigenti={html(){const c=r=>S.dirigenti.filter(d=>d.ruoli.includes(r)).length;
@@ -2371,14 +2437,15 @@ V.partite={html(){const st=S.settings,mc=matchConflicts(),msc=matchSlotConflicts
   <div class="filters"><select id="fm_team" data-f="fm.team" aria-label="Squadra">${teamOpts(UI.fm.team)}</select>
   <label class="check"><input type="checkbox" id="fm_solo" data-f="fm.solo" ${UI.fm.solo?'checked':''}> Solo partite in conflitto</label>
   <label class="check"><input type="checkbox" id="fm_sp" data-f="fm.sp" ${UI.fm.sp?'checked':''}> Solo con spostamento richiesto</label>
+  <label class="check"><input type="checkbox" id="fm_sost" data-f="fm.sost" ${UI.fm.sost?'checked':''}> Solo con allenatore sostituito</label>
   <label class="check"><input type="checkbox" id="fm_past" data-f="fm.past" ${UI.fm.past?'checked':''}> Mostra anche giocate</label>
   <span class="sp"></span><span class="count" id="cnt"></span></div><div class="tw" id="list"></div>`},
   after(){this.list();bindImport();bindDrop('#avdrop','#avfile',avReadFile);if(!ME.admin)document.querySelectorAll('[data-set]').forEach(x=>x.disabled=true)},
   list(){const f=UI.fm,bad=new Set([...matchConflicts().flatMap(c=>[c.a.id,c.b.id]),...matchSlotConflicts().map(c=>c.m.id)]);
-    let L=S.matches.filter(m=>(!f.team||m.teamId===f.team)&&(f.past||m.data>=TODAY_ISO)&&(!f.solo||bad.has(m.id))&&(!f.sp||!!m.spostamento));
+    let L=S.matches.filter(m=>(!f.team||m.teamId===f.team)&&(f.past||m.data>=TODAY_ISO)&&(!f.solo||bad.has(m.id))&&(!f.sp||!!m.spostamento)&&(!f.sost||!!m.staffGara));
     $('#cnt').textContent=`${L.length} partite`;
     $('#list').innerHTML=`<table><thead><tr><th>Data</th><th>Ora</th><th>Squadra</th><th>Gara</th><th>Impianto</th><th>Campionato</th><th>N. gara</th></tr></thead><tbody>${L.map(m=>`<tr class="click ${bad.has(m.id)?'bad':''} ${spPending(m)?'has-sp':''}" data-act="editMatch" data-id="${m.id}"><td class="nowrap num" data-sort="${esc(m.data+' '+m.ora)}">${fmtDow(m.data)}</td><td class="num">${esc(m.ora)}</td><td>${chip(teamOf(m.teamId))}</td>
-    <td>${matchLine(m)}<div class="meta">${m.inCasa?'In casa':'Trasferta'}${m.origine==='manuale'?' · inserita a mano':m.lock?.length?' · modificata a mano':''}${m.staffGara?` · allenatore: ${esc(fullName(staffOf(coachOfMatch(m,'allenatore'))))}`:''}${scRec(m.id)?` · scout ${scRec(m.id).fine?'concluso':'in corso'}`:''}</div>${spPending(m)?spNote(m):spPill(m)}</td><td>${esc(m.impianto)}${gymOfMatch(m)?`<div class="meta">${esc(gymOfMatch(m).nome)}</div>`:''}</td><td><div class="meta">${esc(m.campionato)}${m.girone?' · gir. '+esc(m.girone):''}</div></td><td class="num">${esc(m.numero)}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">Nessuna partita. Importa il file Excel scaricato dal portale FIPAV.</td></tr>'}</tbody></table>`}};
+    <td>${matchLine(m)}<div class="meta">${m.inCasa?'In casa':'Trasferta'}${m.origine==='manuale'?' · inserita a mano':m.lock?.length?' · modificata a mano':''}${scRec(m.id)?` · scout ${scRec(m.id).fine?'concluso':'in corso'}`:''}</div>${spPending(m)?spNote(m):spPill(m)}${sostPill(m)}</td><td>${esc(m.impianto)}${gymOfMatch(m)?`<div class="meta">${esc(gymOfMatch(m).nome)}</div>`:''}</td><td><div class="meta">${esc(m.campionato)}${m.girone?' · gir. '+esc(m.girone):''}</div></td><td class="num">${esc(m.numero)}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">Nessuna partita. Importa il file Excel scaricato dal portale FIPAV.</td></tr>'}</tbody></table>`}};
 
 function importHtml(){
   if(!UI.imp)return`<div class="drop" id="drop"><p>Trascina qui il file <b>.xlsx</b>, <b>.xls</b> o <b>.csv</b> scaricato dal portale FIPAV, anche con il calendario completo del girone: vengono importate solo le gare delle squadre della società, riconosciute dal nome FIPAV impostato in ogni squadra.</p>
@@ -2864,7 +2931,7 @@ V.famiglia={html(){
   <div class="teams" style="margin-bottom:16px">${kids.map(a=>{const v=visita(a),q='quota' in a?quota(a):null,nm=S.matches.find(m=>a.teams.includes(m.teamId)&&m.data>=TODAY_ISO);
     return`<article class="team"><div class="team-h"><div class="badge" style="background:${esc(teamOf(a.teams[0])?.colore||'#888')}">${esc((a.nome[0]||'')+(a.cognome[0]||''))}</div><div style="min-width:0"><h2>${esc(fullName(a))}</h2><div class="meta">${a.teams.map(id=>esc(teamOf(id)?.nome||'')+(magliaOf(a,id)!=null?` · maglia ${esc(magliaOf(a,id))}`:'')).join('<br>')}</div></div></div>
     <dl><dt>Certificato</dt><dd>${pill(v.k,v.t)} <span class="num meta">${fmtD(a.visita?.scadenza)}</span></dd>
-    ${q?`<dt>Quota</dt><dd>${pill(q.k,q.t)}${q.r?` <span class="num">resta ${eur(q.r)}</span>`:''}</dd>`:''}
+    ${q?`<dt>Quota</dt><dd>${pill(q.k,q.t)}${q.r?` <span class="num">resta ${eur(q.r)}</span>`:''}${q.next?.scadenza?`<div class="meta">${q.rate.length>1?q.next.lab[0].toUpperCase()+q.next.lab.slice(1):'Rata'} di ${eur(q.next.manca)} ${q.next.scadenza<TODAY_ISO?'scaduta il':'entro il'} ${fmtD(q.next.scadenza)}</div>`:''}</dd>`:''}
     ${a.teams.map(id=>{const t=teamOf(id),c=staffOf(t?.staff?.allenatore);return t&&c?`<dt>Allenatore ${esc(t.sigla)}</dt><dd>${esc(fullName(c))}</dd>`:''}).join('')}
     <dt>Prossima gara</dt><dd>${nm?`${fmtDow(nm.data)} ${esc(nm.ora)} · ${matchLine(nm)}`:'—'}</dd></dl></article>`}).join('')||'<div class="empty">Nessun atleta collegato al tuo indirizzo email.</div>'}</div>
   <section class="panel" style="margin-bottom:16px"><div class="panel-h"><h2>Prossimi 14 giorni</h2><span class="count">allenamenti e gare</span></div>
@@ -2924,18 +2991,23 @@ const TPL={
   quota:'Gentile famiglia, risulta ancora da versare la quota di iscrizione di {nome}: residuo {residuo}. Potete pagare con bonifico o in segreteria. Grazie, {club}',
   gruppo:'Ciao a tutti! Prossima gara di {squadra}: {prossimaGara}. Ritrovo 60 minuti prima dell\'inizio con divisa da gioco e documento. Grazie, {club}',
   gruppoAvviso:'Ciao a tutti, questa settimana gli allenamenti di {squadra} seguono il consueto orario. Per qualsiasi necessità scrivete in privato all\'allenatore. {club}',
+  sollecitoRata:'Gentile famiglia, la {rata} della quota di iscrizione di {nome} ({importoRata}) {statoRata}. Residuo complessivo: {residuo}. Potete pagare con bonifico o in segreteria; se avete già provveduto, ignorate questo messaggio. Grazie, {club}',
+  sostituto:'Ciao {nome}, per la gara {prossimaGara} sei tu {ruolo} di {squadra} al posto di {titolare}. Grazie, {club}',
+  titolare:'Ciao {nome}, per la gara {prossimaGara} di {squadra} ti sostituisce {sostituto}. Grazie, {club}',
   avviso:'Ciao {nome}, ti ricordiamo che questa settimana gli allenamenti di {squadra} seguono il consueto orario. Per qualsiasi necessità rispondi a questo messaggio. {club}',
 };
 function nextGame(teamId){const m=S.matches.find(m=>m.data>=TODAY_ISO&&(!teamId||m.teamId===teamId));return m?`${matchLineTxt(m)} di ${fmtDow(m.data)} ore ${m.ora}, ${m.impianto}`:'in programma'}
 const matchLineTxt=m=>`${m.casa} – ${m.ospite}`;
-function varsOf(a){const q=quota(a);return{nome:a.nome,scadenzaVisita:fmtD(a.visita?.scadenza),residuo:eur(q?.r||0),squadra:a.teams.map(id=>teamOf(id)?.nome).join(', '),prossimaGara:nextGame(a.teams[0]),club:S.club.nome}}
+function varsOf(a){const q=quota(a),nx=q?.next;return{nome:a.nome,scadenzaVisita:fmtD(a.visita?.scadenza),residuo:eur(q?.r||0),rata:nx?(q.rate.length>1?nx.lab:'rata'):'quota',importoRata:eur(nx?.manca||q?.r||0),scadenzaRata:nx?.scadenza?fmtD(nx.scadenza):'',statoRata:nx?.scadenza?(nx.scadenza<TODAY_ISO?'è scaduta il ':'scade il ')+fmtD(nx.scadenza):'è da versare',squadra:a.teams.map(id=>teamOf(id)?.nome).join(', '),prossimaGara:nextGame(a.teams[0]),club:S.club.nome}}
 function fillTpl(t,v){return String(t).replace(/\{(\w+)\}/g,(m,k)=>v[k]??m)}
 function recipients(){const c=UI.com,tid=c.team==='all'?'':c.team;
   if(c.tipo==='famiglie'){let L=S.athletes.filter(a=>!tid||a.teams.includes(tid));
-    if(c.filtro==='visita')L=L.filter(a=>visita(a).k!=='ok');if(c.filtro==='quota')L=L.filter(a=>quota(a)?.r>0);if(c.filtro==='minori')L=L.filter(isMinor);
+    if(c.filtro==='visita')L=L.filter(a=>visita(a).k!=='ok');if(c.filtro==='quota')L=L.filter(a=>quota(a)?.r>0);if(c.filtro==='late')L=L.filter(a=>quota(a)?.late);if(c.filtro==='soon')L=L.filter(a=>quota(a)?.soon);if(c.filtro==='minori')L=L.filter(isMinor);
+    const sol=['quota','late','soon'].includes(c.filtro);if(sol&&c.noRecent)L=L.filter(a=>!a.quota?.sol||daysTo(a.quota.sol)<-7);
     /* un destinatario per ogni genitore: ognuno riceve il messaggio sul proprio telefono */
     return L.sort((a,b)=>a.cognome.localeCompare(b.cognome)).flatMap(a=>{const v=varsOf(a);if(tid){v.squadra=teamOf(tid).nome;v.prossimaGara=nextGame(tid)}
-      return contactsOf(a).map(ct=>({nome:ct.nome||'—',rif:isMinor(a)?`${ct.rif.toLowerCase()} di ${fullName(a)}${ct.link?' · '+ct.link:''}`:'atleta',email:ct.email,cell:ct.cell,vars:v}))})}
+      return contactsOf(a).map(ct=>({nome:ct.nome||'—',rif:(isMinor(a)?`${ct.rif.toLowerCase()} di ${fullName(a)}${ct.link?' · '+ct.link:''}`:'atleta')+(sol&&a.quota?.sol?` · sollecitato il ${fmtD(a.quota.sol)}`:''),email:ct.email,cell:ct.cell,vars:v,mark:sol?'q:'+a.id:''}))})}
+  if(c.filtro==='sost')return sostList().filter(s=>!tid||s.m.teamId===tid).filter(s=>s.p).map(s=>({nome:fullName(s.p),rif:`${teamOf(s.m.teamId)?.sigla||''} ${fmtDow(s.m.data)} ore ${s.m.ora} · ${s.r==='allenatore'?'allenatore':'secondo'} al posto di ${s.tit?fullName(s.tit):'—'} · ${s.ok?'avvisato':'da avvisare'}`,email:s.p.email,cell:s.p.cell,vars:sostVars(s),mark:`c:${s.m.id}:${s.id}`}))
   const T=tid?[teamOf(tid)]:S.teams,seen=new Set(),out=[];
   T.forEach(t=>{ROLES_STAFF.forEach(([r,l])=>{const p=staffOf(t.staff?.[r]);if(p&&!seen.has(p.id)){seen.add(p.id);out.push({nome:fullName(p),rif:l.toLowerCase(),email:p.email,cell:p.cell,vars:{nome:p.nome,squadra:t.nome,prossimaGara:nextGame(t.id),club:S.club.nome,residuo:'',scadenzaVisita:''}})}});
     S.dirigenti.filter(d=>d.teams.includes(t.id)&&!seen.has(d.id)).forEach(d=>{seen.add(d.id);const k=childrenOf(d);out.push({nome:fullName(d),rif:'dirigente'+(k.length?` · genitore di ${k.map(fullName).join(', ')}`:''),email:d.email,cell:d.cell,vars:{nome:d.nome,squadra:t.nome,prossimaGara:nextGame(t.id),club:S.club.nome,residuo:'',scadenzaVisita:''}})})});
@@ -2945,16 +3017,19 @@ V.comunicazioni={html(){const c=UI.com;if(!c.msg)c.msg=TPL.convocazione;
   <div class="com"><section class="panel"><div class="panel-b" style="display:grid;gap:12px">
     <div class="fgrid"><label class="field"><span>Squadra</span><select id="c_team" data-f="com.team"><option value="all">Tutte le squadre</option>${S.teams.map(t=>`<option value="${t.id}" ${c.team===t.id?'selected':''}>${esc(t.sigla)} · ${esc(t.nome)}</option>`).join('')}</select></label>
     <label class="field"><span>Destinatari</span><select id="c_tipo" data-f="com.tipo"><option value="famiglie" ${c.tipo==='famiglie'?'selected':''}>Famiglie e atleti</option><option value="staff" ${c.tipo==='staff'?'selected':''}>Staff e dirigenti</option><option value="gruppi" ${c.tipo==='gruppi'?'selected':''}>Gruppi WhatsApp della squadra</option></select></label>
-    <label class="field wide"><span>Filtra atleti</span><select id="c_filtro" data-f="com.filtro" ${c.tipo!=='famiglie'?'disabled':''}><option value="">Tutti</option><option value="visita" ${c.filtro==='visita'?'selected':''}>Visita scaduta o in scadenza</option>${canQuote()?`<option value="quota" ${c.filtro==='quota'?'selected':''}>Quota da saldare</option>`:''}<option value="minori" ${c.filtro==='minori'?'selected':''}>Solo minorenni</option></select></label></div>
-    <div><h3>Modelli</h3><div class="tpl">${c.tipo==='gruppi'?'<button class="btn sm" type="button" data-act="tpl" data-id="gruppo">Convocazione al gruppo</button><button class="btn sm" type="button" data-act="tpl" data-id="gruppoAvviso">Avviso al gruppo</button></div></div>':`<button class="btn sm" type="button" data-act="tpl" data-id="convocazione">Convocazione</button><button class="btn sm" type="button" data-act="tpl" data-id="visita">Visita in scadenza</button>${canQuote()?'<button class="btn sm" type="button" data-act="tpl" data-id="quota">Sollecito quota</button>':''}<button class="btn sm" type="button" data-act="tpl" data-id="avviso">Avviso generico</button></div></div>`}
-    <label class="field"><span>Messaggio · segnaposto {nome} {squadra} {prossimaGara} {scadenzaVisita} {residuo} {club}</span><textarea id="c_msg" data-f="com.msg">${esc(c.msg)}</textarea></label>
+    <label class="field wide"><span>Filtra</span><select id="c_filtro" data-f="com.filtro" ${c.tipo==='gruppi'?'disabled':''}>${(c.tipo==='staff'?[['','Tutti'],['sost',`Allenatori sostituti nei prossimi ${SOST_GG} giorni`]]:[['','Tutti'],['visita','Visita scaduta o in scadenza'],...(canQuote()?[['quota','Quota da saldare'],['late','Rata scaduta'],['soon',`Rata in scadenza (${QUOTA_PRESTO} giorni)`]]:[]),['minori','Solo minorenni']]).map(([k,l])=>`<option value="${k}" ${c.filtro===k?'selected':''}>${l}</option>`).join('')}</select></label>
+    ${c.tipo==='famiglie'&&['quota','late','soon'].includes(c.filtro)?`<label class="check wide"><input type="checkbox" id="c_norec" data-f="com.noRecent" ${c.noRecent?'checked':''}> Escludi chi è stato sollecitato negli ultimi 7 giorni</label>`:''}</div>
+    <div><h3>Modelli</h3><div class="tpl">${c.tipo==='gruppi'?'<button class="btn sm" type="button" data-act="tpl" data-id="gruppo">Convocazione al gruppo</button><button class="btn sm" type="button" data-act="tpl" data-id="gruppoAvviso">Avviso al gruppo</button></div></div>':`<button class="btn sm" type="button" data-act="tpl" data-id="convocazione">Convocazione</button><button class="btn sm" type="button" data-act="tpl" data-id="visita">Visita in scadenza</button>${canQuote()?'<button class="btn sm" type="button" data-act="tpl" data-id="quota">Sollecito quota</button><button class="btn sm" type="button" data-act="tpl" data-id="sollecitoRata">Sollecito rata</button>':''}<button class="btn sm" type="button" data-act="tpl" data-id="sostituto">Avviso al sostituto</button><button class="btn sm" type="button" data-act="tpl" data-id="avviso">Avviso generico</button></div></div>`}
+    <label class="field"><span>Messaggio · segnaposto {nome} {squadra} {prossimaGara} {scadenzaVisita} {residuo} {rata} {importoRata} {statoRata} {titolare} {club}</span><textarea id="c_msg" data-f="com.msg">${esc(c.msg)}</textarea></label>
     <p class="hint">${c.tipo==='gruppi'?'WhatsApp non permette di scrivere in un gruppo direttamente da un link. «WhatsApp» apre l\'app con il testo già scritto e scegli tu il gruppo; «Copia e apri il gruppo» copia il testo e apre il gruppo dal suo link d\'invito, dove lo incolli.':'WhatsApp apre una chat per destinatario con il testo già scritto. L\'invio massivo automatico richiede WhatsApp Business API, previsto nella versione completa.'}</p>
   </div></section>
   <section class="panel" id="reclist"></section></div>`},
   after(){this.list()},
   list(){if(UI.com.tipo==='gruppi'){$('#reclist').innerHTML=groupsHtml();return}const R=recipients(),c=UI.com,emails=[...new Set(R.map(r=>r.email).filter(Boolean))];
-    $('#reclist').innerHTML=`<div class="panel-h"><h2>${R.length} destinatari</h2><button class="btn sm" type="button" data-act="copy" data-text="${esc(emails.join('; '))}">${I.copy}Copia ${emails.length} email per Ccn</button></div>
-    <div class="list">${R.map(r=>{const txt=fillTpl(c.msg,r.vars);return`<div class="li"><div class="grow"><div style="font-weight:600">${esc(r.nome)}</div><div style="font-size:12px;color:var(--muted)">${esc(r.rif)} · ${esc(r.cell||'nessun cellulare')}</div></div>${r.cell?`<a class="btn sm" href="${esc(waUrl(r.cell,txt))}" target="_blank" rel="noopener">${I.wa}WhatsApp</a>`:''}${r.email?`<button class="btn sm" type="button" data-act="copy" data-text="${esc(r.email)}">${I.mail}Email</button>`:''}</div>`}).join('')||'<div class="empty">Nessun destinatario con questi filtri.</div>'}</div>`}};
+    const sent=comSent(),wa=R.filter(r=>r.cell),done=wa.filter(r=>sent.has(comKey(r))).length;
+    $('#reclist').innerHTML=`<div class="panel-h"><h2>${R.length} destinatari</h2>${wa.length?`<button class="btn sm pri" type="button" data-act="waNext" ${done>=wa.length?'disabled':''}>${I.wa}${done>=wa.length?'Tutti inviati':done?`Invia al prossimo (${done} di ${wa.length})`:`Invia uno dopo l'altro (${wa.length})`}</button>`:''}<button class="btn sm" type="button" data-act="copy" data-text="${esc(emails.join('; '))}">${I.copy}Copia ${emails.length} email per Ccn</button></div>
+    ${wa.length>1?'<p class="hint" style="margin:8px 16px 0">«Invia uno dopo l\'altro» apre WhatsApp con il messaggio di ciascun destinatario: premi Invia in WhatsApp e torna qui per il successivo. Chi è già stato aperto è segnato con ✓.</p>':''}
+    <div class="list">${R.map(r=>{const txt=fillTpl(c.msg,r.vars),k=comKey(r);return`<div class="li ${sent.has(k)?'com-sent':''}"><div class="grow"><div style="font-weight:600">${sent.has(k)?'✓ ':''}${esc(r.nome)}</div><div style="font-size:12px;color:var(--muted)">${esc(r.rif)} · ${esc(r.cell||'nessun cellulare')}</div></div>${r.cell?`<a class="btn sm" href="${esc(waUrl(r.cell,txt))}" target="_blank" rel="noopener" data-mark="${esc(k)}">${I.wa}WhatsApp</a>`:''}${r.email?`<button class="btn sm" type="button" data-act="copy" data-text="${esc(r.email)}">${I.mail}Email</button>`:''}</div>`}).join('')||'<div class="empty">Nessun destinatario con questi filtri.</div>'}</div>`}};
 
 /* ---------- gruppi WhatsApp della squadra: atleti e genitori ----------
    team.waGruppi = {atleti, genitori}: link d'invito (https://chat.whatsapp.com/…). Il testo usa solo i dati della squadra */
@@ -3154,9 +3229,41 @@ function busyAt(m,id){const dur=+S.settings.durata||120,mar=+S.settings.margine|
 function coachFields(m){const t=teamOf(m.teamId),opt=r=>{const def=staffOf(t?.staff?.[r]);
   return[['',def?`Come la squadra: ${fullName(def)}${busyAt(m,def.id)?' — impegnato: '+busyAt(m,def.id):''}`:'Come la squadra (nessuno)'],...S.staff.filter(p=>p.id!==t?.staff?.[r]).map(p=>{const b=busyAt(m,p.id);return[p.id,fullName(p)+(b?' — impegnato: '+b:' — libero')]})]};
   return`<fieldset style="margin-top:14px"><legend>Allenatori per questa gara</legend><div class="fgrid">${sel('sg_allenatore','Allenatore',m.staffGara?.allenatore||'',opt('allenatore'))}${sel('sg_secondo','Secondo allenatore',m.staffGara?.secondo||'',opt('secondo'))}</div>
-  <p class="hint">Vale solo per questa gara: la squadra resta assegnata al suo allenatore. Il controllo delle sovrapposizioni usa chi è indicato qui.</p></fieldset>`}
+  <p class="hint">Vale solo per questa gara: la squadra resta assegnata al suo allenatore. Il controllo delle sovrapposizioni usa chi è indicato qui.</p></fieldset>${avvHtml(m)}`}
 function setStaffGara(m,fd){const sg={};['allenatore','secondo'].forEach(r=>{const v=(fd.get('sg_'+r)||'').trim();if(v&&v!==teamOf(m.teamId)?.staff?.[r])sg[r]=v});
-  if(Object.keys(sg).length)m.staffGara=sg;else delete m.staffGara}
+  if(Object.keys(sg).length)m.staffGara=sg;else delete m.staffGara;
+  /* l'avviso resta solo per chi è ancora sostituto */
+  if(m.avvisi){const ids=Object.values(m.staffGara||{});Object.keys(m.avvisi).forEach(k=>{if(!ids.includes(k))delete m.avvisi[k]});if(!Object.keys(m.avvisi).length)delete m.avvisi}}
+/* ---------- sostituti delle gare e avvisi ----------
+   Sostituto = allenatore o secondo indicato solo per quella gara (m.staffGara). m.avvisi[id] = {at, da, snap}: l'avviso vale
+   finché la gara non cambia data, ora o impianto (snap); dopo uno spostamento il sostituto torna «da avvisare» */
+const SOST_GG=14,avvSnap=m=>[m.data,m.ora,m.impianto].join('|');
+function sostOf(m){if(!m?.staffGara)return[];const t=teamOf(m.teamId);
+  return['allenatore','secondo'].filter(r=>m.staffGara[r]).map(r=>{const id=m.staffGara[r],a=m.avvisi?.[id]||null;return{m,r,id,p:staffOf(id),tit:staffOf(t?.staff?.[r]),a,ok:!!a&&a.snap===avvSnap(m)}})}
+const sostList=(days=SOST_GG)=>{const lim=iso(addDays(TODAY,days));return S.matches.filter(m=>m.staffGara&&m.data>=TODAY_ISO&&m.data<=lim).sort(byWhen).flatMap(sostOf)};
+function avvisa(m,id){m.avvisi={...(m.avvisi||{}),[id]:{at:new Date().toISOString(),da:ME?.nome||ME?.email||'',snap:avvSnap(m)}}}
+const garaTxt=m=>`${matchLineTxt(m)} di ${fmtDow(m.data)} ore ${m.ora}, ${m.impianto}`;
+const sostVars=s=>({nome:s.p?.nome||'',prossimaGara:garaTxt(s.m),squadra:teamOf(s.m.teamId)?.nome||'',titolare:s.tit?fullName(s.tit):'l\'allenatore della squadra',sostituto:s.p?fullName(s.p):'',ruolo:s.r==='allenatore'?'l\'allenatore':'il secondo allenatore',club:S.club.nome,residuo:'',scadenzaVisita:''});
+const sostName=s=>`${s.p?.cognome||'—'} al posto di ${s.tit?.cognome||'—'}`;
+function sostPill(m){const L=sostOf(m);if(!L.length)return'';const past=m.data<TODAY_ISO,ok=L.every(s=>s.ok);
+  return' '+pill(past?'mute':ok?'ok':'warn',`${past?'Sostituito: ':''}${L.map(sostName).join(', ')}${past?'':ok?' · avvisato':' · da avvisare'}`)}
+const avvWhen=a=>{const d=new Date(a.at);return`${fmtD(iso(d))} alle ${pad(d.getHours())}:${pad(d.getMinutes())}${a.da?' da '+a.da:''}`};
+const avvSt=s=>s.ok?pill('ok','Avvisato il '+avvWhen(s.a)):s.a?pill('warn','Da avvisare di nuovo: la gara è cambiata dopo l\'avviso'):pill('warn','Da avvisare');
+function avvHtml(m){const L=sostOf(m);if(!L.length)return'';const w=canEdit('matches',m);
+  return`<fieldset style="margin-top:14px"><legend>Avviso ai sostituti</legend>${L.map(s=>`<div class="avv-row" data-avv="${m.id}|${s.id}"><div><b>${esc(s.p?fullName(s.p):'—')}</b> <span class="meta">${s.r==='allenatore'?'allenatore':'secondo'} al posto di ${esc(s.tit?fullName(s.tit):'—')}</span></div><div class="avv-st">${avvSt(s)}</div>
+    ${w?`<div class="actions">${s.p?.cell?`<a class="btn sm" href="${esc(waUrl(s.p.cell,fillTpl(TPL.sostituto,sostVars(s))))}" target="_blank" rel="noopener" data-mark="c:${m.id}:${s.id}">${I.wa}Avvisa ${esc(s.p.nome)}</a>`:'<span class="hint">nessun cellulare in anagrafica</span>'}<button type="button" class="btn sm" data-act="avvOk" data-id="${m.id}|${s.id}">Segna come avvisato</button>${s.tit?.cell?`<a class="btn sm" href="${esc(waUrl(s.tit.cell,fillTpl(TPL.titolare,{...sostVars(s),nome:s.tit.nome})))}" target="_blank" rel="noopener">${I.wa}Avvisa anche ${esc(s.tit.nome)}</a>`:''}</div>`:''}</div>`).join('')}
+  <p class="hint">«Avvisa» apre WhatsApp con il messaggio pronto e segna la gara come avvisata. Se la gara cambia data, ora o palestra, il sostituto torna da avvisare.</p></fieldset>`}
+/* segno di inviato in Comunicazioni (per messaggio) e azioni collegate: sollecito della quota, avviso al sostituto */
+const comKey=r=>r.mark||'w:'+digits(r.cell);
+function comSent(){const c=UI.com;if(c.sentMsg!==c.msg){c.sent=new Set();c.sentMsg=c.msg}return c.sent}
+const quotaAny=k=>S.athletes.some(a=>quota(a)?.[k]);
+function comMark(k){if(UI.view==='comunicazioni')comSent().add(k);
+  if(k.startsWith('q:')){const a=S.athletes.find(x=>x.id===k.slice(2));if(a?.quota&&canQuote()&&canEdit('athletes',a)){a.quota.sol=TODAY_ISO;save()}}
+  if(k.startsWith('c:')){const[,mid,sid]=k.split(':'),m=S.matches.find(x=>x.id===mid);if(m&&canEdit('matches',m)&&m.staffGara&&Object.values(m.staffGara).includes(sid)){avvisa(m,sid);save();avvRefresh(m,sid)}}
+  /* si ridisegna dopo l'apertura del link, non durante il tocco */
+  setTimeout(()=>{if(UI.view==='comunicazioni'&&!UI.scout)V.comunicazioni.list()},400)}
+function avvRefresh(m,sid){const el=document.querySelector(`.avv-row[data-avv="${m.id}|${sid}"] .avv-st`),s=sostOf(m).find(x=>x.id===sid);if(el&&s)el.innerHTML=avvSt(s)}
+document.addEventListener('click',e=>{const a=e.target.closest?.('a[data-mark]');if(a?.dataset.mark)comMark(a.dataset.mark)});
 function formCoach(m,cands=[m]){const t=teamOf(m.teamId);
   const why=[...matchConflicts().filter(c=>c.a===m||c.b===m).map(c=>{const o=c.a===m?c.b:c.a;return`in concomitanza con la gara ${teamOf(o.teamId)?.sigla||''} delle ${o.ora}`}),...matchSlotConflicts().filter(c=>c.m===m&&c.tipo==='coach').map(c=>`in concomitanza con l'allenamento ${teamOf(c.sl.teamId)?.sigla||''} ${c.sl.inizio}–${c.sl.fine}`)];
   openDrawer(cands.length>1?'Altro allenatore':`Allenatore · gara ${t?.sigla||''}`,`${pickMatch('matchCoach',m,cands)}<p style="margin-top:0">${fmtDow(m.data)} ore ${esc(m.ora)} · ${matchLine(m)}</p>${why.length?`<p class="hint">La gara è ${esc(why.join('; '))}.</p>`:''}${coachFields(m)}`,
@@ -3980,7 +4087,10 @@ const ACT={
   convoca:(el,id)=>{UI.com={...UI.com,team:id||'all',tipo:'famiglie',filtro:'',msg:TPL.convocazione};go('comunicazioni')},
   copy:el=>copyText(el.dataset.text,el),
   newAth:()=>formAth(),editAth:(el,id)=>formAth(S.athletes.find(a=>a.id===id)),
-  pay:(el,id)=>formPay(S.athletes.find(a=>a.id===id)),
+  pay:(el,id)=>formPay(S.athletes.find(a=>a.id===id)),rate:(el,id)=>formRate(S.athletes.find(a=>a.id===id)),
+  waNext:()=>{const R=recipients(),sent=comSent(),r=R.find(x=>x.cell&&!sent.has(comKey(x)));if(!r)return;window.open(waUrl(r.cell,fillTpl(UI.com.msg,r.vars)),'_blank','noopener');comMark(comKey(r))},
+  avvOk:(el,id)=>{const[mid,sid]=id.split('|');comMark(`c:${mid}:${sid}`);toast('Sostituto segnato come avvisato')},
+  sostDa:()=>{UI.fm={...UI.fm,sost:true,past:false,solo:false,sp:false};go('partite')},quoteF:(el,id)=>{UI.fq={...UI.fq,stato:id};go('quote')},
   newDir:()=>formDir(),editDir:(el,id)=>formDir(S.dirigenti.find(d=>d.id===id)),fdir:(el,id)=>{UI.fd.ruolo=id;render()},
   newStaff:()=>formStaff(),editStaff:(el,id)=>formStaff(staffOf(id)),
   newTeam:()=>formTeam(),editTeam:(el,id)=>formTeam(teamOf(id)),roster:(el,id)=>roster(teamOf(id)),
@@ -4074,7 +4184,7 @@ const ACT={
   linkParents:()=>{const pm=parentMatches();pm.forEach(({a,d})=>linkParent(a,d));save();render();toast(`${pm.length} genitori collegati alla scheda dirigente`)},
   impMerge:()=>{const r=applyImport(S,parseImport(UI.imp,S.teams),'merge');UI.imp=null;save();render();toast(`${r.add} gare aggiunte, ${r.upd} aggiornate`)},
   impReplace:()=>{const r=applyImport(S,parseImport(UI.imp,S.teams),'replace');UI.imp=null;save();render();toast(`Calendario sostituito: ${r.add} gare`)},
-  tpl:(el,id)=>{UI.com.msg=TPL[id];if(id==='visita'){UI.com.filtro='visita';UI.com.tipo='famiglie'}else if(id==='quota'){UI.com.filtro='quota';UI.com.tipo='famiglie'}else UI.com.filtro='';render()},
+  tpl:(el,id)=>{UI.com.msg=TPL[id];if(id==='visita'){UI.com.filtro='visita';UI.com.tipo='famiglie'}else if(id==='quota'){UI.com.filtro='quota';UI.com.tipo='famiglie'}else if(id==='sollecitoRata'){UI.com.filtro=quotaAny('late')?'late':'soon';UI.com.tipo='famiglie'}else if(id==='sostituto'){UI.com.filtro='sost';UI.com.tipo='staff'}else UI.com.filtro='';render()},
   more:()=>openMenu(),club:()=>formClub(),
   reset:el=>{if(!el.classList.contains('confirm')){el.classList.add('confirm');el.textContent='Conferma: cancella le modifiche';return}
     FULLDATA=null;ME=adminProfile('');S=seed();save();UI.imp=null;closeDrawer();render();toast('Dati demo ripristinati')},
@@ -4095,7 +4205,7 @@ $('#scrim').addEventListener('click',closeDrawer);
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#drawer').hidden)closeDrawer()});
 document.addEventListener('input',e=>{const el=e.target;
   if(el.dataset.f){const[o,k]=el.dataset.f.split('.');UI[o][k]=el.type==='checkbox'?el.checked:el.value;
-    if(el.id==='c_tipo'){const c=UI.com;if(c.tipo==='gruppi'&&/\{nome\}/.test(c.msg)&&Object.values(TPL).includes(c.msg))c.msg=TPL.gruppo;else if(c.tipo!=='gruppi'&&(c.msg===TPL.gruppo||c.msg===TPL.gruppoAvviso))c.msg=TPL.convocazione;render();return}(V[UI.view].list||render).call(V[UI.view])}
+    if(el.id==='c_tipo'){const c=UI.com;c.filtro='';if(c.tipo==='gruppi'&&/\{nome\}/.test(c.msg)&&Object.values(TPL).includes(c.msg))c.msg=TPL.gruppo;else if(c.tipo!=='gruppi'&&(c.msg===TPL.gruppo||c.msg===TPL.gruppoAvviso))c.msg=TPL.convocazione;render();return}(V[UI.view].list||render).call(V[UI.view])}
   if(el.dataset.map){UI.imp.map[el.dataset.map]=+el.value;render()}
   if(el.dataset.pmap){UI.pi.map[el.dataset.pmap]=+el.value;render()}
   if('psheet' in el.dataset){UI.pi.sheet=el.value;piDetect();render()}
@@ -4105,6 +4215,8 @@ document.addEventListener('change',e=>{if(e.target.id==='previewAs')previewAs(e.
 document.addEventListener('change',e=>{const i=e.target.dataset?.avlink;if(i==null||!UI.av)return;UI.av.link[i]=e.target.value;render()});
 document.addEventListener('change',e=>{const id=e.target.dataset?.rqsel;if(!id)return;UI.rq.sel=e.target.checked?[...new Set([...UI.rq.sel,id])]:UI.rq.sel.filter(x=>x!==id);render()});
 document.addEventListener('change',e=>{const i=e.target.dataset?.avtx;if(i==null||!UI.av)return;UI.av.tx[i]=e.target.value;render()});
+/* scadenze delle rate (solo amministratore): date, non numeri */
+document.addEventListener('change',e=>{const el=e.target;if(!el.dataset?.rate||!ME?.admin)return;const R={...(S.settings.rate||{})};if(el.value)R[el.dataset.rate]=el.value;else delete R[el.dataset.rate];S.settings.rate=R;save();render()});
 document.addEventListener('change',e=>{const el=e.target;if(!el.dataset.set||!ME?.admin)return;S.settings[el.dataset.set]=el.type==='checkbox'?el.checked:+el.value;save();render()});
 /* aggiornamenti arrivati mentre si scriveva in un filtro: applicali quando il campo perde il focus */
 document.addEventListener('focusout',()=>setTimeout(()=>{if(SYNC.needRender)refresh()},0));
