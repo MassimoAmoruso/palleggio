@@ -3514,7 +3514,7 @@ const scTarget=i=>i>=4?15:25;
 const SC_MIR=new Set(['usB#|themR=','themB#|usR=','themA/|usM#','themA#|usM=','themA#|usD=','usA#|themD=']);
 const scMir=(a,b)=>!!a&&(SC_MIR.has(a+'|'+b)||SC_MIR.has(b+'|'+a));
 /* rilettura di un set: punteggio, battuta, rotazione, statistiche per rotazione */
-function scReplay(st,i,r){let us=0,them=0,serve=!!st.serve,rot=0,fresh=true,last='',lastT='',lastId='',q='T',close=null,run=0,lib=r?.liberi?.[0]||null;const to=[0,0];
+function scReplay(st,i,r){let us=0,them=0,serve=!!st.serve,rot=0,fresh=true,last='',lastT='',lastId='',q='T',close=null,run=0,lib=st.lib||r?.liberi?.[0]||null;const to=[0,0];
   const line=[...st.start],so={},bp={},rf={},dist={},rows=[],seq=[],pt={att:0,muro:0,ace:0,avv:0,err:0,loro:0};
   const P0=(r?.palleggiatori||[]).map(id=>st.start.indexOf(id)).find(k=>k>=0);
   const pos=()=>P0==null?null:((P0-rot)%6+6)%6,P=()=>P0==null?(rot%6+6)%6+1:pos()+1;
@@ -3604,7 +3604,7 @@ const scLineup=(r,start)=>`<div class="sc-court sc-pick">${[4,3,2,5,6,1].map(z=>
 const scZoneL=(z,id)=>'Zona '+z+(z===1?' (battuta)':'')+(id&&scRuolo(id)?' · '+scRuolo(id).l.replace('Schiacciatore/banda','Banda'):'');
 /* scelta del sestetto e dei liberi: chi è già in una casella sparisce dalle altre (e torna se lo togli); le non convocate
    spariscono da tutte. Il ruolo della scelta va accanto alla zona */
-function scLineupSync(){const Z=[1,2,3,4,5,6].map(z=>$('#f_z'+z)).filter(Boolean),L=['l1','l2'].map(n=>$('#f_'+n)).filter(Boolean),all=[...Z,...L];
+function scLineupSync(){const Z=[1,2,3,4,5,6].map(z=>$('#f_z'+z)).filter(s=>s?.options),L=['l1','l2'].map(n=>$('#f_'+n)).filter(s=>s?.options),all=[...Z,...L];
   const base=new Map(all.map(s=>[s,[...s.options].map(o=>[o.value,o.textContent])])),chk=[...document.querySelectorAll('#dBody input[name="roster"]')];
   const upd=()=>{const conv=chk.length?new Set(chk.filter(c=>c.checked).map(c=>c.value)):null;
     all.forEach(s=>{if(s.value&&conv&&!conv.has(s.value))s.value=''});
@@ -3645,8 +3645,10 @@ function formScoutAvv(r){openDrawer('Numeri avversari',`<label class="field"><sp
   {saveLabel:'Salva',onSave:fd=>{r.avv={...(r.avv||{}),num:scNums(fd.get('avvn'))};r.at=Date.now();return'Numeri avversari aggiornati'}})}
 function formScoutSet(r){const sets=scSets(r),last=r.sets[r.sets.length-1],lx=sets[sets.length-1];
   openDrawer(`Set ${r.sets.length+1}`,`<p style="margin-top:0">Set ${r.sets.length}: <b class="num">${lx.us}–${lx.them}</b>. Il sestetto proposto è quello di partenza del set precedente.</p>
-  ${scLineup(r,last.start)}<label class="check" style="margin-top:10px"><input type="checkbox" name="serve" ${last.serve?'':'checked'}> Battiamo noi per primi</label>`,
-  {saveLabel:'Inizia il set',onSave:fd=>{const start=scReadLineup(fd);if(!start)return false;r.sets.push({start,serve:!!fd.get('serve'),ev:[]});r.at=Date.now();return`Set ${r.sets.length} iniziato`}});
+  ${scLineup(r,last.start)}<div class="fgrid" style="margin-top:10px">${sel('l1','Libero di questo set',lx.lib||'',scLibOpt(r))}</div>
+  <label class="check" style="margin-top:10px"><input type="checkbox" name="serve" ${last.serve?'':'checked'}> Battiamo noi per primi</label>`,
+  {saveLabel:'Inizia il set',onSave:fd=>{const start=scReadLineup(fd);if(!start)return false;const lib=fd.get('l1')||'';if(lib&&start.includes(lib)){toast('Il libero non può essere nel sestetto');return false}
+    if(lib&&!r.liberi.includes(lib))r.liberi.push(lib);r.sets.push({start,serve:!!fd.get('serve'),ev:[],...(lib?{lib}:{})});r.at=Date.now();return`Set ${r.sets.length} iniziato`}});
   scLineupSync();
 }
 /* cambi: atleta (con il conto dei cambi del set) e, nella stessa scheda, il libero in campo */
@@ -3658,13 +3660,19 @@ function scWake(on){try{if(typeof navigator==='undefined'||!navigator.wakeLock)r
   else if(!on&&SC_WAKE&&SC_WAKE.release){SC_WAKE.release();SC_WAKE=null}}catch(e){}}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&UI.scout)scWake(true)});
 const scFixRefresh=()=>{if($('#dTitle')?.textContent==='Correggi'&&!$('#drawer').hidden)formScoutFix(scRec(UI.scout))};
+/* atlete che possono fare il libero: prima i liberi indicati, poi le altre convocate non in campo */
+const scLibOpt=(r,esclusi=[])=>{const ids=[...r.liberi,...r.roster.filter(id=>!r.liberi.includes(id)&&/libero/i.test(scAth(id)?.ruolo||'')),...r.roster.filter(id=>!r.liberi.includes(id)&&!/libero/i.test(scAth(id)?.ruolo||''))].filter(id=>!esclusi.includes(id));return scOpt(r,ids)};
+/* fa entrare come libero un'atleta qualsiasi non in campo: diventa libero della partita, non conta tra i cambi */
+function scLibIn(r,id){if(!r||!scMine(r))return;if(!id){toast('Scegli chi entra come libero');return}
+  if(!r.liberi.includes(id))r.liberi.push(id);closeDrawer();scPush('L:'+id);toast(`Entra il libero ${scNum(r,id)} ${scName(id)}`)}
 const SC_MAXCAMBI=6,scCambi=st=>st.ev.filter(e=>e.startsWith('S:')).length;
 function formScoutSub(r){const st=scCur(r),x=scReplay(st,r.sets.length-1,r),n=scCambi(st),bench=r.roster.filter(id=>!x.line.includes(id)&&!r.liberi.includes(id));
   const lib=x.lib&&r.liberi.includes(x.lib)?x.lib:r.liberi[0],other=r.liberi.find(id=>id!==lib);
   openDrawer('Cambi',`<fieldset><legend>Cambio atleta</legend><div class="fgrid">${sel('out','Esce',x.line[0],scOpt(r,x.line))}${sel('in','Entra','',scOpt(r,bench))}</div>
   <p class="hint ${n>=SC_MAXCAMBI?'sc-err':''}">Cambi in questo set: <b>${n} di ${SC_MAXCAMBI}</b>${n>=SC_MAXCAMBI?' — limite raggiunto, controlla prima di confermare':''}.</p></fieldset>
-  ${r.liberi.length?`<fieldset><legend>Libero</legend><div class="sc-libsw"><span>In campo: <b>${esc(scOptL(r,lib))}</b></span>${other?`<button type="button" class="btn" data-act="scLib">Fai entrare ${esc(scNum(r,other)+' '+scName(other))}</button>`:''}</div>
-  <p class="hint">${r.libC?'Il libero entra ed esce da solo al posto dei centrali in seconda linea.':'Le azioni del libero si registrano dal suo pulsante in panchina.'}${other?' Il cambio del libero non conta tra i cambi.':''}</p></fieldset>`:''}`,
+  <fieldset><legend>Libero</legend>${lib?`<div class="sc-libsw"><span>In campo: <b>${esc(scOptL(r,lib))}</b></span>${other?`<button type="button" class="btn" data-act="scLib">Fai entrare ${esc(scNum(r,other)+' '+scName(other))}</button>`:''}</div>`:''}
+  <div class="sc-libsw" style="margin-top:8px">${sel('lsel',lib?'Oppure fai entrare come libero':'Libero',other||'',scLibOpt(r,x.line.concat(lib?[lib]:[])))}<button type="button" class="btn" data-act="scLibSet">${lib?'Cambia libero':'Fai entrare'}</button></div>
+  <p class="hint">${r.libC?'Il libero entra ed esce da solo al posto dei centrali in seconda linea.':'Le azioni del libero si registrano dal suo pulsante in panchina.'} Il cambio del libero non conta tra i cambi; vale fino al prossimo cambio o al nuovo set.</p></fieldset>`,
   {saveLabel:'Conferma cambio',onSave:fd=>{const o=fd.get('out'),i=fd.get('in');if(!o||!i){toast('Scegli chi esce e chi entra');return false}st.ev.push(`S:${o}>${i}`);scSave(r);return`Entra ${scName(i)}, esce ${scName(o)}`}});
 }
 /* correzioni a mano, raccolte in una scheda: punteggio (±1 senza cambiare battuta e rotazione) e rotazione (avanti/indietro
@@ -3717,6 +3725,8 @@ V.scout={html(){const r=scRec(UI.scout),m=S.matches.find(x=>x.id===r.matchId),t=
   const next=scIsO(sel)?scNextO(x):scNext(x,rapida),nextO=r.avv?scNextO(x):[],bench=r.roster.filter(id=>!x.field.includes(id)),FL=Object.fromEntries(SC_F);
   const cand=w&&!sel&&!UI.sc.pend&&next.includes('A')?scCand(x):[],last=st.ev[st.ev.length-1];
   const pbtn=(id,cls='')=>`<button type="button" class="sc-p ${cls} ${sel===id?'on':''} ${auto?.id===id?'auto':''} ${cand.includes(id)?'cand':''} ${r.liberi.includes(id)?'lib':''}" data-act="scP" data-id="${id}" ${w?'':'disabled'}><b>${esc(scNum(r,id))}</b><span>${esc(scName(id))}</span>${x.setter===id?'<i class="sc-tag">P</i>':scRuolo(id)?.s?`<i class="sc-role" title="${esc(scRuolo(id).l)}">${scRuolo(id).s}</i>`:''}</button>`;
+  /* panchina e avversari sotto le valutazioni: campo e pulsanti delle azioni restano vicini, meno da scorrere sul telefono */
+  const benchH=`${bench.length?`<div class="sc-bench"><span class="meta">Panchina</span>${bench.map(id=>pbtn(id,'sm')).join('')}</div>`:''}${r.avv?`<div class="sc-bench sc-opp ${nextO.length&&!sel?'hint':''}"><span class="meta">Avversari${nextO.length?' · ora: '+nextO.map(f=>FL[f].toLowerCase()).join(' o '):''}</span>${(r.avv.num||[]).map(n=>`<button type="button" class="sc-p sm opp ${sel==='o'+n?'on':''}" data-act="scP" data-id="o${n}" ${w?'':'disabled'}><b>${n}</b></button>`).join('')}${w?`<button type="button" class="btn sm" data-act="scAvvN">${(r.avv.num||[]).length?'Numeri':'+ Aggiungi numeri'}</button>`:''}</div>`:''}`;
   return`<div class="sc">
   <div class="sc-top"><button type="button" class="btn sm" data-act="scExit">‹ Esci</button><div class="grow"><b>${chip(t)} ${m?matchLine(m):''}</b><div class="meta">${m?fmtDow(m.data)+' · '+esc(m.ora):''}${r.modulo?' · '+esc(r.modulo):''}${r.fine?' · scout concluso':''}</div></div><button type="button" class="btn sm" data-act="scReport" data-id="${r.matchId}">Report</button></div>
   <div class="sc-score"><div class="sc-side ${x.serve?'srv':''}"><small>Noi</small><b class="num">${x.us}</b></div><div class="sc-mid"><span>Set ${i+1}</span><b class="num">${won}–${lost}</b><span>rotazione P${x.rot}</span></div><div class="sc-side ${x.serve?'':'srv'}"><small>Loro</small><b class="num">${x.them}</b></div></div>
@@ -3726,14 +3736,12 @@ V.scout={html(){const r=scRec(UI.scout),m=S.matches.find(x=>x.id===r.matchId),t=
   ${x.over&&w?`<div class="sc-over">Set concluso ${x.us}–${x.them}. <button type="button" class="btn sm pri" data-act="scNext">Set successivo</button> <button type="button" class="btn sm danger" data-act="scEnd">Fine partita</button></div>`:''}
   <div class="sc-court">${[3,2,1,4,5,0].map(k=>pbtn(x.field[k],k===0&&x.serve?'srv':'')).join('')}</div>
   ${x.field!==x.line?(k=>`<p class="hint sc-libnote">Libero in zona ${k+1} al posto di ${esc(scNum(r,x.line[k])+' '+scName(x.line[k]))}</p>`)(x.field.findIndex((id,k)=>id!==x.line[k])):''}
-  ${bench.length?`<div class="sc-bench"><span class="meta">Panchina</span>${bench.map(id=>pbtn(id,'sm')).join('')}</div>`:''}
-  ${r.avv?`<div class="sc-bench sc-opp ${nextO.length&&!sel?'hint':''}"><span class="meta">Avversari${nextO.length?' · ora: '+nextO.map(f=>FL[f].toLowerCase()).join(' o '):''}</span>${(r.avv.num||[]).map(n=>`<button type="button" class="sc-p sm opp ${sel==='o'+n?'on':''}" data-act="scP" data-id="o${n}" ${w?'':'disabled'}><b>${n}</b></button>`).join('')}${w?`<button type="button" class="btn sm" data-act="scAvvN">${(r.avv.num||[]).length?'Numeri':'+ Aggiungi numeri'}</button>`:''}</div>`:''}
   ${w?(UI.sc.pend?scDirPanel(r):sel?scEvalHtml(r,sel,next,!!auto,rapida)
     :`<p class="hint sc-help">Tocca un'atleta, poi fondamentale e valutazione.${next.length?` Prossima azione probabile: <b>${next.map(f=>FL[f].toLowerCase()).join(' o ')}</b>.`:''}${cand.length?' In evidenza gli attaccanti probabili.':''}</p>`)
-    +`<div class="sc-dock"><div class="sc-last ${last?'':'none'}"><span>${last?'✓ '+esc(scEvTxt(r,last)):'Nessuna azione nel set'}</span><button type="button" class="btn sm" data-act="scUndo" ${st.ev.length||UI.sc.pend?'':'disabled'}>↶ Annulla</button></div>
+    +benchH+`<div class="sc-dock"><div class="sc-last ${last?'':'none'}"><span>${last?'✓ '+esc(scEvTxt(r,last)):'Nessuna azione nel set'}</span><button type="button" class="btn sm" data-act="scUndo" ${st.ev.length||UI.sc.pend?'':'disabled'}>↶ Annulla</button></div>
     <div class="sc-pts"><button type="button" class="btn sc-plus" data-act="scPt" data-id="1">+1 Noi</button><button type="button" class="btn sc-minus" data-act="scPt" data-id="0">+1 Loro</button></div></div>
     <div class="sc-quick">${[[1,'noi'],[0,'loro']].map(([k,l])=>`<button type="button" class="btn" data-act="scTo" data-id="${k}" ${x.to[k?0:1]>=SC_MAXTO?'disabled':''}>Time-out ${l} <span class="meta">${x.to[k?0:1]}/${SC_MAXTO}</span></button>`).join('')}<button type="button" class="btn" data-act="scSub">Cambi <span class="meta">${scCambi(st)}/${SC_MAXCAMBI}</span></button><button type="button" class="btn" data-act="scSit">Situazione</button><button type="button" class="btn" data-act="scFix" title="Punteggio e rotazione corretti a mano">Correggi</button>${x.over?'':`<button type="button" class="btn danger" data-act="scEnd">Fine partita</button>`}</div>`
-   :`<div class="actions">${r.fine&&canScout(m||r)?`<button type="button" class="btn" data-act="scReopen" data-id="${r.matchId}">Riapri lo scout</button>`:''}</div>`}
+   :benchH+`<div class="actions">${r.fine&&canScout(m||r)?`<button type="button" class="btn" data-act="scReopen" data-id="${r.matchId}">Riapri lo scout</button>`:''}</div>`}
   <section class="panel sc-log"><div class="panel-h"><h2>${UI.sc.allLog?'Azioni del set':'Ultime azioni'}</h2><span class="count">set ${i+1}</span></div><div class="list">${st.ev.map((e,k)=>[e,k]).slice(UI.sc.allLog?0:-10).reverse().map(([e,k])=>w?`<button type="button" class="li sc-evb" data-act="scEv" data-id="${k}"><span>${esc(scEvTxt(r,e))}</span><span class="meta">modifica</span></button>`:`<div class="li">${esc(scEvTxt(r,e))}</div>`).join('')||'<div class="empty">Nessuna azione nel set.</div>'}</div>
   ${st.ev.length>10?`<div class="sc-logf"><button type="button" class="btn sm" data-act="scAllLog">${UI.sc.allLog?'Solo le ultime 10':`Tutte le azioni del set (${st.ev.length})`}</button></div>`:''}</section>
   ${w?'<p class="hint">Tocca un\'azione per correggerla o eliminarla: punteggio, battuta e rotazioni si ricalcolano.</p>':''}
@@ -3898,6 +3906,49 @@ function scErrHtml(r,ER){if(!ER.n)return`<h3 style="margin:14px 0 6px">Errori</h
   ${scHBars(SC_F.filter(([f])=>ER.tot[f]).map(([f,l])=>({l,v:ER.tot[f],t:`${l}: ${ER.tot[f]} errori${f==='A'&&ER.mur?`, di cui ${ER.mur} murati`:''}`})).sort((a,b)=>b.v-a.v),'be')}
   <div class="sc-tw"><table class="sc-tab"><thead><tr><th>Atleta</th>${SC_F.map(([f,l])=>`<th title="${l}">${SH[f]}</th>`).join('')}<th>Tot</th></tr></thead>
   <tbody>${ER.who.map(([id,e,k])=>`<tr class="${k===top?'sc-errtop':''}"><td><b class="num">${esc(scNum(r,id))}</b> ${esc(scName(id))}</td>${SC_F.map(([f])=>scErrTd(e[f])).join('')}${scErrTd(k,true)}</tr>`).join('')}</tbody></table></div></div>`}
+/* report in PDF anche dal telefono: la stampa del browser non funziona nelle app sulla schermata Home e non dà un file da
+   condividere. Si fotografa il report (html2canvas) in tema chiaro e largo come un foglio, lo si impagina in A4 (jsPDF) e
+   lo si passa alla condivisione del telefono (WhatsApp, Mail, File); dove non c'è, si scarica. Librerie da cdnjs, solo qui.
+   La condivisione va chiesta con un tocco: dopo la preparazione il pulsante diventa «Condividi PDF» */
+const PDF_LIBS=['https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js','https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'];let pdfLibs=null,REP_PDF=null;
+const loadScript=u=>new Promise((ok,ko)=>{const s=document.createElement('script');s.src=u;s.onload=ok;s.onerror=()=>{s.remove();ko(new Error('Libreria per il PDF non caricata: controlla la connessione'))};document.head.appendChild(s)});
+function loadPdf(){return pdfLibs=pdfLibs||PDF_LIBS.reduce((pr,u)=>pr.then(()=>loadScript(u)),Promise.resolve()).then(()=>{if(typeof html2canvas==='undefined'||!window.jspdf)throw new Error('Libreria per il PDF non disponibile')}).catch(e=>{pdfLibs=null;throw e})}
+const scPdfKey=r=>r.matchId+'|'+(r.at||0)+'|'+UI.scRep.f+'|'+UI.scRep.who;
+const scPdfReady=r=>!!REP_PDF&&REP_PDF.key===scPdfKey(r);
+const canShareFile=f=>{try{return!!navigator.canShare?.({files:[f]})}catch(e){return false}};
+function scPdfOut(f){if(canShareFile(f)){navigator.share({files:[f],title:f.name.replace(/\.pdf$/,'')}).catch(e=>{if(e.name!=='AbortError')toast('Condivisione non riuscita: '+e.message)});return}
+  const u=URL.createObjectURL(f),a=document.createElement('a');a.href=u;a.download=f.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60e3);toast('PDF scaricato')}
+async function scPdf(r,btn){if(scPdfReady(r)){scPdfOut(REP_PDF.file);return}
+  const el=$('#dBody .sc-rep');if(!el)return;const lab=btn?.innerHTML;if(btn){btn.disabled=true;btn.textContent='Preparo il PDF…'}
+  try{await loadPdf();
+    /* larghezza di un foglio; scala limitata perché i telefoni non disegnano immagini troppo grandi */
+    const Wpx=800,est=el.scrollHeight*Math.max(.5,el.clientWidth/Wpx),scale=Math.max(1,Math.min(2,Math.sqrt(14e6/(Wpx*Math.max(est,1)))));
+    /* html2canvas copia nei grafici SVG i colori del tema in uso (scuro sul telefono di sera): si ricorda lo stile scritto a mano
+       di ogni elemento per ripartire da quello nella copia in tema chiaro */
+    el.querySelectorAll('svg, svg *').forEach(n=>n.setAttribute('data-st',n.getAttribute('style')||''));
+    const canvas=await html2canvas(el,{scale,backgroundColor:'#ffffff',windowWidth:Wpx+40,logging:false,onclone:doc=>{
+      doc.documentElement.dataset.theme='light';const d=doc.querySelector('#drawer'),b=doc.querySelector('#dBody');
+      Object.assign(d.style,{position:'static',width:Wpx+'px',height:'auto',boxShadow:'none'});Object.assign(b.style,{overflow:'visible',height:'auto',maxHeight:'none'});
+      doc.querySelectorAll('.sc-rep .actions,.sc-rep .sc-dirbar').forEach(x=>x.remove());doc.querySelectorAll('.sc-rep .sc-tw').forEach(x=>{x.style.overflow='visible'});
+      /* html2canvas non legge i colori color()/color-mix(): li si riscrive in rgba sugli elementi del report e sui contenitori */
+      const rgba=v=>v.replace(/color\(srgb ([\d.e-]+) ([\d.e-]+) ([\d.e-]+)(?: \/ ([\d.e-]+))?\)/g,(x,r,g,b,al)=>`rgba(${Math.round(r*255)},${Math.round(g*255)},${Math.round(b*255)},${al??1})`);
+      const CP=['color','background-color','border-top-color','border-right-color','border-bottom-color','border-left-color','outline-color','text-decoration-color','box-shadow','text-shadow'];
+      [...doc.querySelectorAll('.sc-rep, .sc-rep *'),d,b,doc.body,doc.documentElement].forEach(n=>{const s=doc.defaultView.getComputedStyle(n);CP.forEach(k=>{const v=s.getPropertyValue(k);if(v&&/color\(|color-mix/.test(v))n.style.setProperty(k,/color-mix/.test(v)?'transparent':rgba(v))})});
+      /* i grafici SVG si disegnano come immagini, senza il foglio di stile: colori e testi vanno scritti sugli elementi */
+      const cs=n=>doc.defaultView.getComputedStyle(n);doc.querySelectorAll('.sc-rep svg, .sc-rep svg *').forEach(n=>n.setAttribute('style',n.getAttribute('data-st')||''));
+      doc.querySelectorAll('.sc-rep svg').forEach(svg=>{const bb=svg.getBoundingClientRect();svg.setAttribute('width',bb.width);svg.setAttribute('height',bb.height);
+        svg.querySelectorAll('*').forEach(n=>{const s=cs(n);['fill','stroke','stroke-width','opacity','fill-opacity','font-size','font-weight','font-family','text-anchor'].forEach(k=>{const v=s.getPropertyValue(k);if(v)n.style.setProperty(k,v)})})})}});
+    el.querySelectorAll('[data-st]').forEach(n=>n.removeAttribute('data-st'));
+    const{jsPDF}=window.jspdf,pdf=new jsPDF({unit:'mm',format:'a4'}),W=190,pxmm=canvas.width/W,pageH=Math.floor(277*pxmm),ctx=canvas.getContext('2d');
+    /* taglio di pagina su una riga bianca, per non spezzare a metà testi e tabelle */
+    const white=y=>{const d=ctx.getImageData(0,y,canvas.width,1).data;for(let i=0;i<d.length;i+=16)if(d[i]<245||d[i+1]<245||d[i+2]<245)return false;return true};
+    for(let y=0,pg=0;y<canvas.height;pg++){let h=Math.min(pageH,canvas.height-y);if(y+h<canvas.height){for(let k=0;k<pageH*.15;k++)if(white(y+h-k)){h-=k;break}}
+      const c=document.createElement('canvas');c.width=canvas.width;c.height=h;c.getContext('2d').drawImage(canvas,0,y,canvas.width,h,0,0,canvas.width,h);
+      if(pg)pdf.addPage();pdf.addImage(c.toDataURL('image/jpeg',.9),'JPEG',10,10,W,h/pxmm);y+=h}
+    const m=S.matches.find(x=>x.id===r.matchId),name=`report-scout-${teamOf(r.teamId)?.sigla||''}-${m?.data||''}.pdf`.replace(/\s+/g,'');
+    REP_PDF={key:scPdfKey(r),file:new File([pdf.output('blob')],name,{type:'application/pdf'})};
+    if(canShareFile(REP_PDF.file)){if(btn){btn.disabled=false;btn.innerHTML=I.down+'Condividi PDF';btn.classList.add('pri')}toast('PDF pronto: tocca «Condividi PDF»',4000)}else{scPdfOut(REP_PDF.file);if(btn){btn.disabled=false;btn.innerHTML=lab}}}
+  catch(e){toast('PDF non creato: '+e.message,5000);if(btn){btn.disabled=false;btn.innerHTML=lab}}}
 function scReport(r,keep){if(!r)return;const sc=keep?$('#dBody').scrollTop:0;const m=S.matches.find(x=>x.id===r.matchId),t=teamOf(r.teamId),sets=scSets(r),P=scStats(r);
   const won=sets.filter(s=>s.over||r.fine).filter(s=>s.us>s.them).length,lost=sets.filter(s=>s.over||r.fine).filter(s=>s.them>s.us).length;
   const ids=r.roster.filter(id=>P[id]),pts=id=>['B','A','M'].reduce((s,f)=>s+scC(P[id]?.[f],'#'),0),err=id=>SC_F.reduce((s,[f])=>s+scErrs(P[id]?.[f],f),0);
@@ -3937,7 +3988,7 @@ function scReport(r,keep){if(!r)return;const sc=keep?$('#dBody').scrollTop:0;con
     <label class="field"><span>Atleta</span><select id="rep_who"><option value="">${o?'Tutti gli avversari':'Tutta la squadra'}</option>${cand.map(id=>`<option value="${id}" ${who===id?'selected':''}>${esc(scIsO(id)?'Avversario n. '+id.slice(1):scNum(r,id)+' · '+fullName(scAth(id)))}</option>`).join('')}</select></label></div>
     ${L.length?`<div class="sc-court-wrap">${scCourtSvg(L,f)}<div class="hint">${L.length} ${f==='B'?'battute':'attacchi'} con direzione. Frecce: <span class="lg ok">punto</span> <span class="lg ko">errore o murata</span> <span class="lg mid">altro</span>. In alto il campo ${o?'nostro':'avversario'}, la percentuale indica dove finisce la palla.</div></div>`:'<p class="hint">Nessuna direzione registrata: attiva «Direzioni» durante lo scout.</p>'}`})()}
   <p class="hint">Positività = (# e +) / totale. Efficienza = (punti − errori) / totale, da −100% a +100%; in attacco l'attacco murato conta come errore, a muro l'invasione. Errori in ricezione = ace subìti.</p>
-  <div class="actions"><a class="btn" href="${esc('https://wa.me/?text='+encodeURIComponent(txt))}" target="_blank" rel="noopener">${I.wa}WhatsApp</a><button type="button" class="btn" data-act="copy" data-text="${esc(txt)}">${I.copy}Copia riepilogo</button><button type="button" class="btn" data-act="print">Stampa / PDF</button><button type="button" class="btn" data-act="scXls" data-id="${r.matchId}">${I.down}Excel</button>
+  <div class="actions"><a class="btn" href="${esc('https://wa.me/?text='+encodeURIComponent(txt))}" target="_blank" rel="noopener">${I.wa}WhatsApp</a><button type="button" class="btn" data-act="copy" data-text="${esc(txt)}">${I.copy}Copia riepilogo</button><button type="button" class="btn" data-act="scPdf" data-id="${r.matchId}">${I.down}${scPdfReady(r)?'Condividi PDF':'PDF'}</button>${matchMedia('(pointer:coarse)').matches?'':'<button type="button" class="btn" data-act="print">Stampa</button>'}<button type="button" class="btn" data-act="scXls" data-id="${r.matchId}">${I.down}Excel</button>
   <button type="button" class="btn" data-act="scSeason" data-id="${r.teamId}">Stagione e obiettivi</button>
   ${UI.scout!==r.matchId?`<button type="button" class="btn" data-act="scOpen" data-id="${r.matchId}">Apri lo scout</button>`:''}</div></div>`);
   if(keep)$('#dBody').scrollTop=sc;
@@ -4117,7 +4168,7 @@ const ACT={
   scFromZ:(el,z)=>{if(UI.sc.pend){UI.sc.pend.from=+z;render()}},
   scSkip:()=>{const d=UI.sc.pend;if(!d)return;UI.sc.pend=null;scPush(`${d.id}.${d.f}${d.v}`)},
   scRepF:(el,f)=>{UI.scRep.f=f;UI.scRep.who='';scReport(scRec(el.dataset.m),true)},
-  scXls:(el,id)=>scExport(scRec(id)),
+  scXls:(el,id)=>scExport(scRec(id)),scPdf:(el,id)=>scPdf(scRec(id),el),
   scMode:(el,id)=>{UI.sc.rapida=id==='1';try{localStorage.setItem('palleggio-scout-rapida',id)}catch(e){}render()},
   scAutoT:()=>{UI.sc.auto=!UI.sc.auto;try{localStorage.setItem('palleggio-scout-auto',UI.sc.auto?'1':'0')}catch(e){}render()},
   /* toccare l'atleta scelta (anche in automatico) la toglie */
@@ -4129,6 +4180,7 @@ const ACT={
     scPush(`${p}.${id}`)},
   scPt:(el,id)=>scPush(id==='1'?'P+':'P-'),scTo:(el,id)=>{scPush(id==='1'?'T+':'T-');scSituazione(scRec(UI.scout),true)},
   scSit:()=>scSituazione(scRec(UI.scout)),scFix:()=>formScoutFix(scRec(UI.scout)),
+  scLibSet:()=>scLibIn(scRec(UI.scout),$('#f_lsel')?.value),
   scRot:(el,id)=>{scPush(id==='1'?'R+':'R-');scFixRefresh()},scMinus:(el,id)=>{scPush(id==='1'?'X+':'X-');scFixRefresh()},scPlusF:(el,id)=>{scPush(id==='1'?'Y+':'Y-');scFixRefresh()},
   scLib:()=>{const r=scRec(UI.scout);if(!r||!scMine(r))return;const x=scReplay(scCur(r),r.sets.length-1,r),o=r.liberi.find(id=>id!==x.lib);if(!o)return;closeDrawer();scPush('L:'+o);toast(`Entra il libero ${scNum(r,o)} ${scName(o)}`)},scEv:(el,id)=>formScoutEv(scRec(UI.scout),+id),scAllLog:()=>{UI.sc.allLog=!UI.sc.allLog;render()},
   scLibC:()=>{const r=scRec(UI.scout);if(!r||!scMine(r))return;r.libC=!r.libC;UI.sc.sel=null;scSave(r)},
