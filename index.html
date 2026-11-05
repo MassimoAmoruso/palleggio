@@ -1692,7 +1692,7 @@ const REMOTE=GAS||!!CFG.api;
 const OLD_PAGE=GAS&&!!CFG.sito;
 const COLLS=['gyms','teams','staff','dirigenti','athletes','slots','matches','utenti','scout','avversari'];
 const POLL=20000;
-const SYNC={ready:false,version:0,epoch:'',base:new Map(),skip:new Map(),full:true,fullAt:0,dirty:new Set(),noDelta:new Set(),busy:false,again:false,timer:0,deb:0,state:'ok',err:'',at:null,user:'',url:'',needRender:false,me:null,dataDirty:false,dataAt:0,dataOff:false,gen:0};
+const SYNC={ready:false,version:0,epoch:'',base:new Map(),skip:new Map(),full:true,fullAt:0,dirty:new Set(),noDelta:new Set(),sentLost:new Map(),busy:false,again:false,timer:0,deb:0,state:'ok',err:'',at:null,user:'',url:'',needRender:false,me:null,dataDirty:false,dataAt:0,dataOff:false,gen:0};
 const byWhen=(a,b)=>(a.data+a.ora).localeCompare(b.data+b.ora);
 /* utente collegato: profilo calcolato dal server con le regole di perm.js. Qui serve solo per adattare
    l'interfaccia: i dati che non può vedere non arrivano e le modifiche non permesse il server le rifiuta */
@@ -1803,9 +1803,27 @@ function applyRecord(c,id,json){let o=null;if(json!=null){try{o=JSON.parse(json)
    i campi che l'utente ha cambiato nel frattempo restano i suoi, gli altri prendono il valore del server */
 function rebaseRecord(c,id,ref,json){const loc=localRec(c,id);
   if(json==null||!loc||ref==null||sj(loc)===ref){applyRecord(c,id,json);return}
+  /* scout cambiato qui e sul server: si tengono le azioni locali solo se contengono già tutte quelle del server */
+  if(c==='scout'){let srv=null;try{srv=JSON.parse(json)}catch(e){}if(srv&&!scExtends(loc,srv)){scKeepLost(id,sj(loc),'');applyRecord(c,id,json);return}}
   let r=null,o=null;try{r=JSON.parse(ref);o=JSON.parse(json)}catch(e){applyRecord(c,id,json);return}
   for(const k of diffKeys(r,loc)){if(k in loc)o[k]=loc[k];else delete o[k]}
   applyRecord(c,id,sj(o))}
+/* ---------- scout: niente azioni perse per un salvataggio arrivato senza risposta ----------
+   Lo scout lo scrive un dispositivo alla volta (r.lock). Se un salvataggio arriva al server ma la risposta si perde (rete
+   debole, schermo spento), il giro dopo parte da una base vecchia e il server segnala un conflitto con... il salvataggio
+   precedente dello stesso dispositivo. Lì si tengono le azioni locali quando la versione del server è una già inviata da qui
+   (SYNC.sentLost) oppure è contenuta in quella locale (stessi set, azioni del server all'inizio di quelle locali).
+   Altrimenti vince il server, ma le azioni locali restano in una copia e si possono ripristinare */
+const canon=o=>Array.isArray(o)?'['+o.map(canon).join(',')+']':o&&typeof o==='object'?'{'+Object.keys(o).sort().map(k=>JSON.stringify(k)+':'+canon(o[k])).join(',')+'}':JSON.stringify(o);
+function scExtends(a,b){if(!a?.sets||!b?.sets||b.sets.length>a.sets.length)return false;
+  return b.sets.every((s,i)=>{const x=a.sets[i];return!!x&&sj(s.start)===sj(x.start)&&!!s.serve===!!x.serve&&(s.ev||[]).length<=(x.ev||[]).length&&(s.ev||[]).every((e,j)=>e===x.ev[j])})}
+function scKeepMine(k,loc,srvJson){if(!loc||srvJson==null)return false;let srv=null;try{srv=JSON.parse(srvJson)}catch(e){return false}
+  return!!SYNC.sentLost.get(k)?.has(canon(srv))||scExtends(loc,srv)}
+const SC_LOST='palleggio-scout-perso-';
+function scKeepLost(id,json,da){try{localStorage.setItem(SC_LOST+id,json)}catch(e){}
+  toastAct(`${da||'Un altro dispositivo'} ha salvato lo scout con azioni diverse: tenuta la sua versione`,'Ripristina le mie azioni',()=>scRestoreLost(id),15000)}
+function scRestoreLost(id){let o=null;try{o=JSON.parse(localStorage.getItem(SC_LOST+id)||'null')}catch(e){}const r=S.scout.find(x=>x.id===id);if(!o||!r)return;
+  for(const k of Object.keys(r))delete r[k];Object.assign(r,o,{at:Date.now()});try{localStorage.removeItem(SC_LOST+id)}catch(e){}saveRec('scout',r);render();toast('Azioni ripristinate: le salvo ora')}
 function setBase(c,id,rev,json){const k=c+'/'+id;if(json==null)SYNC.base.delete(k);else SYNC.base.set(k,{c,id,rev,json})}
 
 /* modifiche non ancora salvate, conservate sul dispositivo: se l'app si chiude senza rete non vanno perse
@@ -1876,6 +1894,8 @@ function restorePending(){let p=null;try{p=JSON.parse(localStorage.getItem(PEND_
   for(const ch of p.changes){const b=SYNC.base.get(ch.c+'/'+ch.id),rev=b?b.rev:0;
     if(rev===(ch.base||0)){applyRecord(ch.c,ch.id,ch.json);ok++;continue}
     const loc=localRec(ch.c,ch.id);let mine=null;try{mine=ch.json==null?null:JSON.parse(ch.json)}catch(e){}
+    if(ch.c==='scout'&&loc&&mine&&scExtends(mine,loc)){applyRecord(ch.c,ch.id,ch.json);ok++;continue}
+    if(ch.c==='scout'&&loc&&mine){scKeepLost(ch.id,ch.json,'');lost++;continue}
     if(loc&&mine&&Array.isArray(ch.keys)&&ch.prev&&ch.keys.every(k=>sj(loc[k])===sj(ch.prev[k])||sj(loc[k])===sj(mine[k]))){
       const o=JSON.parse(sj(loc));for(const k of ch.keys){if(k in mine)o[k]=mine[k];else delete o[k]}applyRecord(ch.c,ch.id,sj(o));ok++}
     else lost++}
@@ -1909,11 +1929,16 @@ async function sync(){
     const sent=new Map(send.map(ch=>[ch.c+'/'+ch.id,ch]));
     /* il server restituisce il record come lo vede l'utente: se differisce da quello inviato, si allinea */
     let redraw=false,merged=null;
-    for(const a of res.applied){const k=a.c+'/'+a.id;setBase(a.c,a.id,a.rev,a.json);SYNC.skip.delete(k);SYNC.noDelta.delete(k);if(a.merged&&!merged)merged=a;
+    for(const a of res.applied){const k=a.c+'/'+a.id;setBase(a.c,a.id,a.rev,a.json);SYNC.skip.delete(k);SYNC.noDelta.delete(k);SYNC.sentLost.delete(k);if(a.merged&&!merged)merged=a;
       if(a.json!==sent.get(k).json){rebaseRecord(a.c,a.id,sent.get(k).json,a.json);redraw=true}}
-    const lost=res.conflicts.map(r=>({...r,label:sent.get(r.c+'/'+r.id)?.label}));
+    /* scout: conflitto con un proprio salvataggio (o con una versione già contenuta qui): si tengono le azioni locali e si rimandano */
+    const mine=res.conflicts.filter(r=>r.c==='scout'&&scKeepMine(r.c+'/'+r.id,localRec(r.c,r.id),r.json));
+    for(const r of mine){const k=r.c+'/'+r.id;setBase(r.c,r.id,r.rev,r.json);SYNC.noDelta.add(k);SYNC.dirty.add(k);SYNC.again=true}
+    const confl=res.conflicts.filter(r=>!mine.includes(r));
+    for(const r of confl)if(r.c==='scout'){const loc=localRec(r.c,r.id);if(loc&&r.json!=null)scKeepLost(r.id,sj(loc),r.da)}
+    const lost=confl.filter(r=>r.c!=='scout').map(r=>({...r,label:sent.get(r.c+'/'+r.id)?.label}));
     const denied=(res.denied||[]).map(r=>({...r,label:sent.get(r.c+'/'+r.id)?.label}));
-    for(const r of[...res.conflicts,...denied]){setBase(r.c,r.id,r.rev,r.json);applyRecord(r.c,r.id,r.json)}
+    for(const r of[...confl,...denied]){setBase(r.c,r.id,r.rev,r.json);applyRecord(r.c,r.id,r.json)}
     /* modifiche degli altri: si tengono quelle fatte qui nel frattempo (record cambiato dopo la base, non ancora inviato) */
     for(const r of res.changes){const k=r.c+'/'+r.id;setBase(r.c,r.id,r.rev,r.json);rebaseRecord(r.c,r.id,baseNow.get(k)??null,r.json)}
     for(const r of res.rejected||[]){const k=r.c+'/'+r.id,ch=sent.get(k);
@@ -1923,7 +1948,7 @@ async function sync(){
       toast(`«${ch?.label||'Un dato'}» non è stato salvato (${r.why}): le altre modifiche sono salvate`,8000)}
     if(res.version!==SYNC.version||res.applied.length||res.changes.length||res.conflicts.length||denied.length)SYNC.dataDirty=true;
     SYNC.version=res.version;SYNC.at=new Date();if(res.user)SYNC.user=res.user;
-    if(redraw||res.conflicts.length||denied.length||res.changes.length){S.matches.sort(byWhen);refresh()}
+    if(redraw||confl.length||denied.length||res.changes.length){S.matches.sort(byWhen);refresh()}
     if(denied.length)toast(`Non hai i permessi per modificare «${denied[0].label||'questo dato'}»: modifica annullata`,6000);
     else if(lost.length){const r=lost[0],chi=r.da||'un altro utente';
       toast(r.json==null?`«${r.label||'Il dato'}» è stato eliminato da ${chi}: la tua modifica non è stata salvata`:`${chi} ha modificato «${r.label||'lo stesso dato'}» poco prima di te: tenuta la sua versione`,6000)}
@@ -1932,7 +1957,10 @@ async function sync(){
     setSync(still?'pending':SYNC.skip.size?'error':'ok',SYNC.skip.size?'Alcuni dati non si possono salvare':'');
     /* i permessi sono cambiati (es. nuova squadra assegnata): si ricarica tutto */
     if(res.reload&&!still){SYNC.busy=false;toast('I tuoi permessi sono cambiati: aggiorno i dati',4000);boot(true);return}
-  }catch(e){if(isAuth(e)){SYNC.busy=false;logoutLocal(errMsg(e));return}putBack();setSync('error',errMsg(e))}
+  }catch(e){if(isAuth(e)){SYNC.busy=false;logoutLocal(errMsg(e));return}putBack();
+    /* forse il salvataggio è arrivato e si è persa solo la risposta: si ricorda cosa si è inviato (scout) */
+    for(const ch of send)if(ch.c==='scout'&&ch.json!=null){const k=ch.c+'/'+ch.id,L=SYNC.sentLost.get(k)||new Set();try{L.add(canon(JSON.parse(ch.json)))}catch(x){}if(L.size>6)L.delete(L.values().next().value);SYNC.sentLost.set(k,L)}
+    setSync('error',errMsg(e))}
   finally{SYNC.busy=false;savePending();if(SYNC.dataDirty&&!UI.scout&&Date.now()-SYNC.dataAt>60e3)saveData();
     if(SYNC.again){SYNC.again=false;SYNC.deb=setTimeout(sync,50)}
     else SYNC.timer=setTimeout(sync,SYNC.state==='error'?10000:POLL)}
