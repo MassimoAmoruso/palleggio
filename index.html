@@ -839,6 +839,8 @@ tr.mute td{opacity:.55}
 .q-optr:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
 .q-optr input{margin-top:3px}
 .q-optr small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.imp-amb{border:1px solid color-mix(in srgb,var(--warn) 45%,transparent);background:var(--warn-soft);border-radius:10px;padding:4px 12px 10px;margin:10px 0}
+.imp-amb h3{margin:8px 0 2px}
 </style>
 </head>
 <body class="boot">
@@ -1534,19 +1536,32 @@ function cellTime(v){
   if(typeof v==='number'&&v<1)return m2t(Math.round(v*1440)%1440);
   const m=String(v||'').match(/(\d{1,2})[:.](\d{2})/);return m?pad(m[1])+':'+m[2]:'';
 }
-function associate(teams,casa,ospite){
+/* squadre della società con lo stesso nome FIPAV (succede: «VOLLEY LARIO» in più categorie). Tra quelle con quel nome
+   vale quella con il campionato della gara (t.campionato o i campionati già abbinati, t.campFipav); se resta il dubbio
+   decide chi importa: pick[nome|categoria] = id della squadra, '' = non importare. Senza scelta la gara non si importa */
+const teamCamps=t=>[t.campionato,...(t.campFipav||[])].filter(Boolean);
+const impPickKey=(nome,camp)=>norm(nome)+'|'+catKey(camp);
+function associate(teams,casa,ospite,camp='',pick=null){
+  const same=n=>teams.filter(t=>norm(t.fipav)&&norm(t.fipav)===n);
+  const part=n=>{let best=0;teams.forEach(t=>{const f=norm(t.fipav);if(f&&n.includes(f)&&f.length>best)best=f.length});return best?teams.filter(t=>{const f=norm(t.fipav);return f&&n.includes(f)&&f.length===best}):[]};
   const nc=norm(casa),no=norm(ospite);
-  for(const t of teams){const f=norm(t.fipav);if(!f)continue;if(f===nc)return{team:t,home:true};if(f===no)return{team:t,home:false}}
-  let best=null;for(const t of teams){const f=norm(t.fipav);if(!f)continue;
-    if(nc.includes(f)&&(!best||f.length>norm(best.team.fipav).length))best={team:t,home:true};
-    if(no.includes(f)&&(!best||f.length>norm(best.team.fipav).length))best={team:t,home:false}}
-  return best;
+  const sides=[[same(nc),casa,true],[same(no),ospite,false]];if(!sides[0][0].length&&!sides[1][0].length)sides.splice(0,2,[part(nc),casa,true],[part(no),ospite,false]);
+  for(const[L,nome,home]of sides){if(!L.length)continue;if(L.length===1)return{team:L[0],home};
+    const k=impPickKey(nome,camp);
+    if(pick&&k in pick){const t=L.find(x=>x.id===pick[k]);return t?{team:t,home}:{skip:true,home}}
+    const C=L.filter(t=>teamCamps(t).some(c=>catEq(c,camp)));if(C.length===1)return{team:C[0],home};
+    return{amb:{key:k,nome,camp,cands:(C.length?C:L).map(x=>x.id)},home}}
+  return null;
 }
 function parseImport(imp,teams){
   return imp.body.map(r=>{const g=f=>imp.map[f]>=0?r[imp.map[f]]:'';const dt=cellDate(g('data'));
-    const casa=String(g('casa')).trim(),ospite=String(g('ospite')).trim(),a=associate(teams,casa,ospite);
-    return{numero:String(g('numero')).trim(),campionato:String(g('campionato')).trim(),girone:String(g('girone')).trim()||(String(g('campionato')).match(/\bgir(?:one)?\.?\s*([a-z0-9]+)/i)?.[1]||''),data:dt?.date||'',ora:cellTime(g('ora'))||dt?.time||'',casa,ospite,impianto:String(g('impianto')).trim(),teamId:a?.team.id||null,inCasa:a?a.home:null}});
+    const casa=String(g('casa')).trim(),ospite=String(g('ospite')).trim(),a=associate(teams,casa,ospite,String(g('campionato')).trim(),imp.pick);
+    return{...(a?.amb?{amb:a.amb}:{}),...(a?.skip?{skip:true}:{}),numero:String(g('numero')).trim(),campionato:String(g('campionato')).trim(),girone:String(g('girone')).trim()||(String(g('campionato')).match(/\bgir(?:one)?\.?\s*([a-z0-9]+)/i)?.[1]||''),data:dt?.date||'',ora:cellTime(g('ora'))||dt?.time||'',casa,ospite,impianto:String(g('impianto')).trim(),teamId:a?.team?.id||null,inCasa:a?a.home:null}});
 }
+/* gare con il nome FIPAV di più squadre, raggruppate per nome e campionato: una scelta per gruppo */
+function impAmbGroups(parsed){const G=new Map();parsed.forEach(p=>{if(!p.amb)return;const g=G.get(p.amb.key)||{...p.amb,n:0};g.n++;G.set(p.amb.key,g)});return[...G.values()]}
+/* dopo l'importazione: la squadra scelta ricorda il campionato, così la volta dopo si abbina da sola */
+function impRemember(imp){Object.entries(imp.pick||{}).forEach(([k,id])=>{const t=teamOf(id),camp=imp.pickCamp?.[k];if(!t||!camp||teamCamps(t).some(c=>catEq(c,camp)))return;t.campFipav=[...(t.campFipav||[]),camp]})}
 function applyImport(st,parsed,mode){
   const ok=parsed.filter(p=>p.teamId&&p.data),key=m=>m.numero||(m.data+norm(m.casa)+norm(m.ospite)),old=st.matches;
   /* "sostituisci" tiene le gare inserite a mano; i campi modificati a mano (lock) non vengono sovrascritti */
@@ -2479,8 +2494,11 @@ function importHtml(){
   if(!UI.imp)return`<div class="drop" id="drop"><p>Trascina qui il file <b>.xlsx</b>, <b>.xls</b> o <b>.csv</b> scaricato dal portale FIPAV, anche con il calendario completo del girone: vengono importate solo le gare delle squadre della società, riconosciute dal nome FIPAV impostato in ogni squadra.</p>
     <div class="actions"><label class="btn pri" for="file">${I.up}Scegli file</label><input type="file" id="file" accept=".xlsx,.xls,.csv,.ods" hidden><button class="btn" type="button" data-act="impSample">Usa file di esempio</button></div></div>
     <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">Oppure incolla le righe copiate da Excel</summary><textarea id="pasteArea" class="paste" placeholder="Seleziona in Excel le righe con l'intestazione, copia e incolla qui"></textarea><button class="btn sm" type="button" data-act="impPaste" style="margin-top:6px">Leggi righe incollate</button></details>`;
-  const imp=UI.imp,parsed=parseImport(imp,S.teams);const ours=parsed.filter(p=>p.teamId),noDate=ours.filter(p=>!p.data).length;
-  return`<div class="summary"><span>File <b>${esc(UI.impName)}</b></span><span><b>${parsed.length}</b> righe</span><span><b>${ours.length}</b> della società</span><span><b>${parsed.length-ours.length}</b> di altre società (ignorate)</span>${noDate?`<span style="color:var(--crit)"><b>${noDate}</b> senza data leggibile</span>`:''}</div>
+  const imp=UI.imp,parsed=parseImport(imp,S.teams);const ours=parsed.filter(p=>p.teamId),noDate=ours.filter(p=>!p.data).length,amb=impAmbGroups(parsed),nAmb=parsed.filter(p=>p.amb).length,nSkip=parsed.filter(p=>p.skip).length;
+  imp.pickCamp=imp.pickCamp||{};amb.forEach(g=>imp.pickCamp[g.key]=g.camp);
+  return`<div class="summary"><span>File <b>${esc(UI.impName)}</b></span><span><b>${parsed.length}</b> righe</span><span><b>${ours.length}</b> della società</span>${nAmb?`<span style="color:var(--warn)"><b>${nAmb}</b> da abbinare</span>`:''}${nSkip?`<span><b>${nSkip}</b> escluse da te</span>`:''}<span><b>${parsed.length-ours.length-nAmb-nSkip}</b> di altre società (ignorate)</span>${noDate?`<span style="color:var(--crit)"><b>${noDate}</b> senza data leggibile</span>`:''}</div>
+  ${amb.length?`<section class="imp-amb"><h3>Squadre con lo stesso nome FIPAV</h3><p class="hint">Più squadre della società hanno questo nome sul portale: scegli a quale vanno le gare di ogni campionato. La scelta resta per le prossime importazioni. Le gare senza scelta non vengono importate.</p>
+    <div class="map">${amb.map(g=>`<label class="field"><span>«${esc(g.nome)}» · ${esc(g.camp||'campionato non indicato')} · ${plur(g.n,'gara','gare')}</span><select data-imppick="${esc(g.key)}"><option value="">— scegli la squadra —</option>${g.cands.map(id=>`<option value="${id}">${esc(teamOf(id)?.sigla||'')} · ${esc(teamOf(id)?.nome||'')}${teamOf(id)?.campionato?' ('+esc(teamOf(id).campionato)+')':''}</option>`).join('')}<option value="-">Non importare queste gare</option></select></label>`).join('')}</div></section>`:''}
   <h3>Colonne riconosciute</h3><div class="map">${IMPORT_FIELDS.map(([k,l])=>`<label class="field"><span>${l}</span><select id="map_${k}" data-map="${k}"><option value="-1">— non presente —</option>${imp.header.map((h,i)=>`<option value="${i}" ${imp.map[k]===i?'selected':''}>${esc(h||'Colonna '+(i+1))}</option>`).join('')}</select></label>`).join('')}</div>
   <h3>Anteprima gare della società</h3><div class="tw" style="margin:8px 0 12px;max-height:280px;overflow:auto"><table><thead><tr><th>Data</th><th>Ora</th><th>Squadra</th><th>Casa – Ospite</th><th>Impianto</th></tr></thead><tbody>${ours.slice(0,40).map(p=>`<tr><td class="num nowrap">${p.data?fmtDow(p.data):'<span style="color:var(--crit)">?</span>'}</td><td class="num">${esc(p.ora)}</td><td>${chip(teamOf(p.teamId))}</td><td>${esc(p.casa)} – ${esc(p.ospite)}</td><td>${esc(p.impianto)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">Nessuna riga riconosciuta. Controlla le colonne Squadra casa/ospite e il nome FIPAV nelle schede squadra.</td></tr>'}</tbody></table></div>
   <div class="actions"><button class="btn pri" type="button" data-act="impMerge" ${ours.length?'':'disabled'}>Aggiorna calendario</button><button class="btn" type="button" data-act="impReplace" ${ours.length?'':'disabled'}>Sostituisci tutto il calendario</button><button class="btn" type="button" data-act="impCancel">Annulla</button></div>
@@ -2611,20 +2629,26 @@ const KINDS={
 const getP=(o,k)=>k.split('.').reduce((x,p)=>x?.[p],o);
 const setP=(o,k,v)=>{const ps=k.split('.'),last=ps.pop();let x=o;ps.forEach(p=>{if(!x[p]||typeof x[p]!=='object')x[p]={};x=x[p]});x[last]=v};
 /* valore di una cella → dato dell'app; undefined = cella vuota o non utilizzabile (il campo esistente non viene toccato) */
-function parseCell(t,v,warn){
+/* squadra scritta in una cella: prima la sigla, poi il nome, poi il nome FIPAV (spesso uguale per tutte le squadre).
+   Più squadre possibili: decide chi importa (p.tpick), intanto la cella resta in sospeso (null). undefined = nessuna */
+function cellTeam(x,warn,p){const n=norm(x);let L=[];for(const f of['sigla','nome','fipav']){L=S.teams.filter(t=>t[f]&&norm(t[f])===n);if(L.length)break}
+  if(!L.length)return undefined;if(L.length===1)return L[0];
+  const ch=p?.tpick?.[n];if(ch)return L.find(t=>t.id===ch)||undefined;
+  if(p){p.amb=p.amb||{};p.amb[n]={x,ids:L.map(t=>t.id)}}warn.push(`«${x}» indica più squadre: scegli sopra quale`);return null}
+function parseCell(t,v,warn,p){
   const s=String(v??'').trim();if(s==='')return undefined;
   switch(t){
     case'date':{const d=cellDate(v);if(!d?.date){warn.push(`data non valida: ${s}`);return undefined}return d.date}
     case'sex':return/^f|femm|donn/i.test(s)?'F':/^m|masc|uomo/i.test(s)?'M':undefined;
     case'bool':return/^(s|si|sì|x|1|true|vero|y|yes|giov)/i.test(s);
     case'num':{const n=typeof v==='number'?v:parseFloat((s.includes(',')?s.replace(/\./g,'').replace(',','.'):s).replace(/[^\d.-]/g,''));return isNaN(n)?undefined:n}
-    case'teams':{const ids=[];s.split(/[,;\/|+]+/).map(x=>x.trim()).filter(Boolean).forEach(x=>{const t=S.teams.find(t=>[t.sigla,t.nome,t.fipav].some(y=>y&&norm(y)===norm(x)));
-      if(!t)warn.push(`squadra non trovata: ${x}`);else if(!ids.includes(t.id))ids.push(t.id)});return ids.length?ids:undefined}
+    case'teams':{const ids=[];s.split(/[,;\/|+]+/).map(x=>x.trim()).filter(Boolean).forEach(x=>{const t=cellTeam(x,warn,p);
+      if(t===undefined)warn.push(`squadra non trovata: ${x}`);else if(t&&!ids.includes(t.id))ids.push(t.id)});return ids.length?ids:undefined}
     case'roles':{const r=ROLES_DIR.map(([k])=>k).filter(k=>new RegExp(k.slice(0,5),'i').test(s));if(!r.length)warn.push(`incarico non riconosciuto: ${s}`);return r.length?r:undefined}
     case'gym':{const g=S.gyms.find(g=>norm(g.nome)===norm(s)||(g.fipav&&norm(g.fipav)===norm(s)));if(!g){warn.push(`palestra non trovata: ${s}`);return undefined}return g.id}
     case'tel':return s.replace(/\.0$/,'');
     case'maglie':{const one=s.replace(/\.0$/,'');if(/^\d{1,3}$/.test(one))return{_all:+one};const m={};
-      s.split(/[,;]+/).map(x=>x.trim()).filter(Boolean).forEach(x=>{const r=x.match(/^(.*?)[\s:#n°.]*(\d{1,3})$/i),t=r&&S.teams.find(t=>[t.sigla,t.nome,t.fipav].some(y=>y&&norm(y)===norm(r[1])));
+      s.split(/[,;]+/).map(x=>x.trim()).filter(Boolean).forEach(x=>{const r=x.match(/^(.*?)[\s:#n°.]*(\d{1,3})$/i),t=r&&cellTeam(r[1],warn,p);
         if(t)m[t.id]=+r[2];else warn.push(`maglia senza squadra riconosciuta: ${x}`)});return Object.keys(m).length?m:undefined}
     default:return s}
 }
@@ -2646,9 +2670,9 @@ function parseRow(K,r,p){const o={},has=new Set(),warn=[];
     if(f.t==='full'){const parts=String(r[i]??'').trim().split(/\s+/).filter(Boolean);if(!parts.length)return;
       const nomePrima=/^nome/.test(normH(p.header[i]));o.nome=nomePrima?parts[0]:parts[parts.length-1];
       const cog=(nomePrima?parts.slice(1):parts.slice(0,-1)).join(' ');has.add('nome');if(cog){o.cognome=cog;has.add('cognome')}return}
-    const v=parseCell(f.t,r[i],warn);if(v!==undefined){setP(o,f.k,v);has.add(f.k)}});
+    const v=parseCell(f.t,r[i],warn,p);if(v!==undefined){setP(o,f.k,v);has.add(f.k)}});
   return{o,has,warn}}
-function piPreview(){const p=UI.pi,K=KINDS[p.kind],idx=new Map(),seen=new Set();
+function piPreview(){const p=UI.pi,K=KINDS[p.kind],idx=new Map(),seen=new Set();p.amb={};
   S[K.coll].forEach(r=>K.keys(r).filter(Boolean).forEach(k=>idx.has(k)||idx.set(k,r)));
   return p.body.map((r,i)=>{const{o,has,warn}=parseRow(K,r,p),ks=K.keys(o).filter(Boolean);
     const target=ks.map(k=>idx.get(k)).find(Boolean)||null,err=[];
@@ -2700,6 +2724,8 @@ function piReviewHtml(){const p=UI.pi,K=KINDS[p.kind],R=piPreview(),cnt=s=>R.fil
     ${miss.length?`<p class="hint" style="color:var(--crit)">Colonne obbligatorie non trovate: ${miss.map(f=>f.l).join(', ')}. Abbinale qui sotto.</p>`:''}
     <details ${miss.length?'open':''}><summary class="hint" style="cursor:pointer">Abbinamento colonne (${K.f.filter(f=>p.map[f.k]>=0).length} riconosciute) · modifica</summary>
     <div class="map">${K.f.map(f=>`<label class="field"><span>${esc(f.l)}${f.req?' *':''}</span><select data-pmap="${f.k}"><option value="-1">— non presente —</option>${p.header.map((h,i)=>`<option value="${i}" ${p.map[f.k]===i?'selected':''}>${esc(h||'Colonna '+(i+1))}</option>`).join('')}</select></label>`).join('')}</div></details>
+    ${Object.keys(p.amb||{}).length?`<section class="imp-amb"><h3>Nomi che indicano più squadre</h3><p class="hint">Scegli a quale squadra si riferisce ogni nome. Per evitarlo, nel file usa la sigla della squadra (per esempio U16F).</p>
+      <div class="map">${Object.entries(p.amb).map(([k,a])=>`<label class="field"><span>«${esc(a.x)}»</span><select data-ptpick="${esc(k)}"><option value="">— scegli la squadra —</option>${a.ids.map(id=>`<option value="${id}">${esc(teamOf(id)?.sigla||'')} · ${esc(teamOf(id)?.nome||'')}</option>`).join('')}</select></label>`).join('')}</div></section>`:''}
     ${p.kind==='athletes'?`<label class="check"><input type="checkbox" data-pilink ${p.link?'checked':''}> Collega ai dirigenti i genitori che hanno la stessa email o lo stesso cellulare</label>`:''}
     <div class="tw" style="margin:12px 0;max-height:440px;overflow:auto"><table><thead><tr><th>${K.one}</th><th>Esito</th><th>Dati letti</th><th>Note</th><th>Riga</th></tr></thead><tbody>
     ${R.slice(0,300).map(x=>`<tr><td><div class="who">${esc(x.lab)}</div></td><td>${x.st==='new'?pill('ok','Nuovo'):x.st==='upd'?pill('warn','Aggiorna'):pill('crit','Errore')}</td>
@@ -4262,8 +4288,8 @@ const ACT={
     box.insertAdjacentHTML('beforeend',parentRow({},i,true));syncParentFields(i);$('#f_g_nome_'+i).focus()},
   delParent:el=>el.closest('.prow').remove(),
   linkParents:()=>{const pm=parentMatches();pm.forEach(({a,d})=>linkParent(a,d));save();render();toast(`${pm.length} genitori collegati alla scheda dirigente`)},
-  impMerge:()=>{const r=applyImport(S,parseImport(UI.imp,S.teams),'merge');UI.imp=null;save();render();toast(`${r.add} gare aggiunte, ${r.upd} aggiornate`)},
-  impReplace:()=>{const r=applyImport(S,parseImport(UI.imp,S.teams),'replace');UI.imp=null;save();render();toast(`Calendario sostituito: ${r.add} gare`)},
+  impMerge:()=>{const r=applyImport(S,parseImport(UI.imp,S.teams),'merge');impRemember(UI.imp);UI.imp=null;save();render();toast(`${r.add} gare aggiunte, ${r.upd} aggiornate`)},
+  impReplace:()=>{const r=applyImport(S,parseImport(UI.imp,S.teams),'replace');impRemember(UI.imp);UI.imp=null;save();render();toast(`Calendario sostituito: ${r.add} gare`)},
   tpl:(el,id)=>{UI.com.msg=TPL[id];if(id==='visita'){UI.com.filtro='visita';UI.com.tipo='famiglie'}else if(id==='quota'){UI.com.filtro='quota';UI.com.tipo='famiglie'}else if(id==='sollecitoRata'){UI.com.filtro=quotaAny('late')?'late':'soon';UI.com.tipo='famiglie'}else if(id==='sostituto'){UI.com.filtro='sost';UI.com.tipo='staff'}else UI.com.filtro='';render()},
   more:()=>openMenu(),club:()=>formClub(),
   reset:el=>{if(!el.classList.contains('confirm')){el.classList.add('confirm');el.textContent='Conferma: cancella le modifiche';return}
@@ -4287,6 +4313,8 @@ document.addEventListener('input',e=>{const el=e.target;
   if(el.dataset.f){const[o,k]=el.dataset.f.split('.');UI[o][k]=el.type==='checkbox'?el.checked:el.value;
     if(el.id==='c_tipo'){const c=UI.com;c.filtro='';if(c.tipo==='gruppi'&&/\{nome\}/.test(c.msg)&&Object.values(TPL).includes(c.msg))c.msg=TPL.gruppo;else if(c.tipo!=='gruppi'&&(c.msg===TPL.gruppo||c.msg===TPL.gruppoAvviso))c.msg=TPL.convocazione;render();return}(V[UI.view].list||render).call(V[UI.view])}
   if(el.dataset.map){UI.imp.map[el.dataset.map]=+el.value;render()}
+  if(el.dataset.imppick!=null){const P=UI.imp.pick=UI.imp.pick||{},k=el.dataset.imppick;if(el.value==='')delete P[k];else P[k]=el.value==='-'?'':el.value;render()}
+  if(el.dataset.ptpick!=null){const P=UI.pi.tpick=UI.pi.tpick||{};if(el.value)P[el.dataset.ptpick]=el.value;else delete P[el.dataset.ptpick];render()}
   if(el.dataset.pmap){UI.pi.map[el.dataset.pmap]=+el.value;render()}
   if('psheet' in el.dataset){UI.pi.sheet=el.value;piDetect();render()}
   if('pilink' in el.dataset){UI.pi.link=el.checked;render()}});
