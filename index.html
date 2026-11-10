@@ -1068,6 +1068,7 @@ function permCan(P, c, cur, next) {
     case 'matches':
       if (P.giov && both(function (m) { return inG(m.teamId); })) return true;
       if (P.segr && cur && next && P.segrTeams.indexOf(cur.teamId) >= 0 && P.segrTeams.indexOf(next.teamId) >= 0) return true; /* la segreteria modifica le gare delle sue squadre (e ne approva gli spostamenti), non le crea né le elimina */
+      if (cur && next && permSpApprove(P, cur) && P.workTeams.indexOf(cur.teamId) >= 0 && permSpEsito(cur, next)) return true; /* allenatore o dirigente che approva o rifiuta */
       if (!next && cur && cur.origine !== 'manuale') return false; /* le gare FIPAV le elimina solo la segreteria */
       return both(function (m) { return M.indexOf(m.teamId) >= 0; }) && permSpOk(cur, next);
   }
@@ -1079,8 +1080,25 @@ var PERM_SP_FIX = ['data', 'ora', 'impianto', 'gymId'];
 /* gara FIPAV: chi non approva gli spostamenti non ne cambia nemmeno squadra, avversari, numero e campionato,
    né i campi protetti dall'import (lock), che conservano gli spostamenti approvati */
 var PERM_FIPAV_FIX = PERM_SP_FIX.concat(['teamId', 'casa', 'ospite', 'inCasa', 'numero', 'campionato', 'girone', 'lock']);
-function permSpApprove(P, m) {
+/* chi gestisce il calendario della squadra: amministratori, segreteria e responsabile giovanile competenti.
+   Oltre ad approvare, correggono i dati FIPAV della gara ed eliminano le richieste chiuse */
+function permSpFull(P, m) {
   return !!P && !P.preview && (P.admin || (P.segr && P.segrTeams.indexOf(m.teamId) >= 0) || (P.giov && P.giovTeams.indexOf(m.teamId) >= 0));
+}
+/* chi approva o rifiuta uno spostamento: chi gestisce il calendario e anche allenatori (e secondi) e dirigenti della squadra.
+   Allenatori e dirigenti registrano solo l'esito (vedi permSpEsito): non correggono gli altri dati della gara */
+function permSpApprove(P, m) {
+  return permSpFull(P, m) || (!!P && !P.preview && (P.coachTeams.indexOf(m.teamId) >= 0 || P.dirTeams.indexOf(m.teamId) >= 0));
+}
+/* esito di una richiesta in attesa: cambia solo lo stato (con data e autore dell'esito); se approvata, la gara passa
+   a data, ora e impianto richiesti (lock li protegge dai prossimi import). Nient'altro della gara cambia */
+function permSpEsito(cur, next) {
+  var a = cur.spostamento, b = next.spostamento;
+  if (!a || a.stato !== 'richiesta' || !b || (b.stato !== 'approvata' && b.stato !== 'rifiutata')) return false;
+  if (!permOnly(a, b, ['stato', 'esito', 'esitoDa'])) return false;
+  if (b.stato === 'rifiutata') return permOnly(cur, next, ['spostamento']);
+  if (!a.al || next.data !== a.al.data || next.ora !== a.al.ora) return false;
+  return permOnly(cur, next, ['spostamento', 'data', 'ora', 'impianto', 'gymId', 'lock']);
 }
 /* regole per allenatori e dirigenti (chi approva non passa di qui).
    match.spostamento è la richiesta più recente; quelle chiuse (approvate o rifiutate) restano in match.spostStorico
@@ -1725,8 +1743,10 @@ const spCnt=n=>n?`<span class="pill warn ph-sp">${n} con spostamento richiesto</
 const spTag=m=>spPending(m)?` <span class="sp-tag" title="Spostamento richiesto, in attesa di approvazione">${I.swap}${esc(spProposta(m).replace(/^proposta/,"Proposta"))}</span>`:spPill(m);
 const spNote=m=>spPending(m)?`<div class="sp-note">${pill('warn','In approvazione')} <span>${esc(spProposta(m))}</span></div>`:'';
 const canApprove=m=>!!m&&permSpApprove(ME,m);
+/* chi gestisce il calendario (amministratori, segreteria, responsabile giovanile): corregge anche i dati FIPAV */
+const canSpFull=m=>!!m&&permSpFull(ME,m);
 /* data, ora e impianto di una gara FIPAV si cambiano solo con uno spostamento approvato (o da chi approva) */
-const fixedWhen=m=>!!m&&m.origine!=='manuale'&&!canApprove(m);
+const fixedWhen=m=>!!m&&m.origine!=='manuale'&&!canSpFull(m);
 function slotConflicts(all=false){
   const out=[],add=c=>{c.ign=ignOf(c.a,c.b);if(all||!c.ign)out.push(c)};const tec=t=>[t?.staff?.allenatore,t?.staff?.secondo].filter(Boolean);
   for(let i=0;i<S.slots.length;i++)for(let j=i+1;j<S.slots.length;j++){const a=S.slots[i],b=S.slots[j];
@@ -2300,7 +2320,7 @@ function todoManage(){const L=[],A=S.athletes;
   const sd=sostList().filter(s=>!s.ok&&canEdit('matches',s.m));
   if(sd.length){const s=sd[0];L.push({k:'warn',ic:'cal',t:plur(sd.length,'sostituto da avvisare','sostituti da avvisare'),s:`Nei prossimi ${SOST_GG} giorni · il primo ${fmtDow(s.m.data)}: ${esc(sostName(s))} (${esc(teamOf(s.m.teamId)?.sigla||'')})`,b:{act:'sostDa',l:'Vedi',pri:1}})}
   const pend=S.matches.filter(m=>spPending(m)&&!canApprove(m));
-  if(pend.length)L.push({k:'info',ic:'clock',t:plur(pend.length,'richiesta di spostamento in attesa','richieste di spostamento in attesa'),s:'Le approva la segreteria competente',b:{act:'nav',id:'richieste',l:'Apri'}});
+  if(pend.length)L.push({k:'info',ic:'clock',t:plur(pend.length,'richiesta di spostamento in attesa','richieste di spostamento in attesa'),s:'Le approvano la segreteria, gli allenatori o i dirigenti della squadra',b:{act:'nav',id:'richieste',l:'Apri'}});
   return L}
 
 function todoTeam(){const T=ME?.workTeams||[],L=[],mine=x=>T.includes(x.teamId);
@@ -3125,9 +3145,9 @@ V.accessi={html(){
     <tr><td><b>Amministratore</b></td><td>tutto</td><td>tutto, compresi accessi e regole</td></tr>
     <tr><td><b>Segreteria</b></td><td>tutte le gare e gli allenamenti</td><td>gare delle squadre di competenza: approva o rifiuta gli spostamenti</td></tr>
     <tr><td><b>Responsabile giovanile</b></td><td>squadre giovanili: atlete complete di quote, staff, dirigenti</td><td>atlete, quote, squadre, staff, dirigenti, gare e allenamenti del giovanile</td></tr>
-    <tr><td><b>Allenatore / secondo</b></td><td>le sue squadre: atlete (senza quote, codice fiscale, indirizzo), contatti genitori, visite; tutte le gare e gli allenamenti</td><td>allenamenti e gare delle sue squadre, note sulle atlete</td></tr>
+    <tr><td><b>Allenatore / secondo</b></td><td>le sue squadre: atlete (senza quote, codice fiscale, indirizzo), contatti genitori, visite; tutte le gare e gli allenamenti</td><td>allenamenti e gare delle sue squadre, note sulle atlete; chiede, approva o rifiuta gli spostamenti delle sue squadre</td></tr>
     <tr><td><b>Altro staff</b></td><td>come l'allenatore, per le squadre in cui ha un incarico</td><td>niente</td></tr>
-    <tr><td><b>Dirigente</b></td><td>squadre seguite: atlete complete (senza quote), gare e allenamenti</td><td>scheda delle atlete delle sue squadre (non squadre e quote), amichevoli e richieste di spostamento</td></tr>
+    <tr><td><b>Dirigente</b></td><td>squadre seguite: atlete complete (senza quote), gare e allenamenti</td><td>scheda delle atlete delle sue squadre (non squadre e quote), amichevoli; chiede, approva o rifiuta gli spostamenti delle sue squadre</td></tr>
     <tr><td><b>Genitore</b></td><td>solo i propri figli (certificato, quota) e il calendario delle loro squadre</td><td>niente</td></tr></tbody></table>
     <p class="hint">I ruoli si ricavano dai dati: l'allenatore dalla scheda squadra, il dirigente dalle squadre seguite, il genitore dall'email nella scheda atleta. Togliendo l'email o l'incarico, l'accesso si chiude al controllo successivo.</p>
     ${noMail.length||kidsNo?`<p class="hint" style="color:var(--warn)">Non possono accedere perché manca l'email: ${noMail.map(([r,n])=>`${esc(n)} (${r.toLowerCase()})`).join(', ')}${kidsNo?`${noMail.length?'; ':''}genitori di ${kidsNo} atlete minorenni`:''}.</p>`:''}
@@ -3369,7 +3389,7 @@ function formMatch(m){const n=!m;const tw=S.teams.filter(t=>can('matches',null,{
   ${sel('gymId','Palestra della società',m.gymId||gm?.id||'',[['','— nessuna (trasferta o altro impianto) —'],...S.gyms.map(g=>[g.id,g.nome])],{wide:1,dis:fx})}
   ${inp('impianto','Impianto (come sul calendario FIPAV)',m.impianto,{wide:1,dis:fx})}${inp('campionato','Campionato',m.campionato,{dis:fx})}${inp('girone','Girone',m.girone,{dis:fx})}</div>
   ${coachFields(m)}
-  ${fx?`<p class="ro-note">I dati della gara sono quelli del calendario FIPAV e li corregge la segreteria. Per cambiare data, ora o impianto richiedi lo spostamento: diventa effettivo quando la segreteria lo approva. Qui puoi indicare l'allenatore della gara.</p>`:''}
+  ${fx?`<p class="ro-note">I dati della gara sono quelli del calendario FIPAV e li corregge la segreteria. Per cambiare data, ora o impianto richiedi lo spostamento: diventa effettivo quando viene approvato. Qui puoi indicare l'allenatore della gara.</p>`:''}
   ${!n?`<fieldset style="margin-top:14px"><legend>Spostamento ${spPill(m)}</legend>${m.spostamento?`<p class="hint" style="margin:0 0 8px">Richiesto il ${fmtD(m.spostamento.il)}: al ${fmtDow(m.spostamento.al.data)} ${esc(m.spostamento.al.ora)}${m.spostamento.al.palestra?', '+esc(m.spostamento.al.palestra):''}.${spPending(m)?' Finché non è approvato la gara resta all\'orario attuale.':''}</p><button type="button" class="btn sm" data-act="spView" data-id="${m.id}">${spPending(m)&&canApprove(m)?'Valuta la richiesta':'Vedi la richiesta'}</button>`:canEdit('matches',m)?`<button type="button" class="btn sm" data-act="spNew" data-id="${m.id}">Richiedi spostamento</button>`:'<span class="hint">Nessuna richiesta.</span>'}${spStoricoHtml(m)}</fieldset>`:''}
   ${!n?avBox(m):''}
   ${!n?scoutBox(m):''}
@@ -3587,7 +3607,7 @@ function formSposta(m,cands=[m]){const sp=spPending(m)||{},g=gymOfMatch(m),cur=g
   <label class="field wide"><span>Palestra</span><input id="f_palestra" name="palestra" list="sp_gyms" value="${esc(sp.al?.palestra??cur)}"><datalist id="sp_gyms">${S.gyms.map(x=>`<option value="${esc(x.nome)}">`).join('')}</datalist></label></div></fieldset>
   <fieldset><legend>Disponibilità</legend><div id="spChk">${spCheckHtml(m,{data:sp.al?.data||'',ora:sp.al?.ora||m.ora,palestra:sp.al?.palestra??cur})}</div></fieldset>
   <fieldset><legend>Motivazione</legend><label class="field"><textarea id="f_motivazione" name="motivazione" rows="4" required aria-label="Motivazione">${esc(sp.motivazione??spMotivo(m))}</textarea></label></fieldset>
-  <p class="hint">Salvando, la richiesta resta registrata sulla gara e ottieni il testo da inviare al comitato e alla società avversaria. La gara resta all'orario attuale finché la richiesta non viene approvata dalla segreteria${segretari(m.teamId).length?' ('+esc(segNames(segretari(m.teamId)))+')':''}: solo allora si sposta.</p>`,
+  <p class="hint">Salvando, la richiesta resta registrata sulla gara e ottieni il testo da inviare al comitato e alla società avversaria. La gara resta all'orario attuale finché la richiesta non viene approvata (da ${esc(approvers(m))}): solo allora si sposta.</p>`,
   {ro:!canEdit('matches',m),saveLabel:'Prepara richiesta',onSave:fd=>{const g=k=>(fd.get(k)||'').trim();
     if(g('al_data')===g('dal_data')&&g('al_ora')===g('dal_ora')){toast('La nuova data e ora coincidono con quelle attuali');return false}
     if(!g('motivazione')){toast('Scrivi la motivazione');return false}
@@ -3601,7 +3621,7 @@ function formSposta(m,cands=[m]){const sp=spPending(m)||{},g=gymOfMatch(m),cur=g
 function spView(m){const sp=m.spostamento;if(!sp){formSposta(m);return}const txt=spText(m),w=canEdit('matches',m),ap=canApprove(m),pend=!!spPending(m),av=avOf(m),mail=[S.club.emailFipav,av?.dir?.email].filter(Boolean).join(',');
   const subj=`Richiesta spostamento gara n. ${sp.numero||''} – ${catTxt(sp.categoria)}`,body=txt.replace(/^Oggetto:.*\n\n/,'');
   openDrawer('Richiesta di spostamento',`<div class="sp-head">${spPill(m)}<span class="meta">richiesta il ${fmtD(sp.il)}${spDa(m)?' da '+esc(spDa(m)):''}${sp.esito?` · esito registrato il ${fmtD(sp.esito)}${sp.esitoDa?' da '+esc(sp.esitoDa):''}`:''}</span></div>
-  ${pend?`<p class="ro-note">In attesa di approvazione: la gara resta ${fmtDow(m.data)} ore ${esc(m.ora)} finché ${ap?'non registri l\'esito':'la segreteria non la approva'}.</p>`:''}
+  ${pend?`<p class="ro-note">In attesa di approvazione: la gara resta ${fmtDow(m.data)} ore ${esc(m.ora)} finché ${ap?'non registri l\'esito':'non viene approvata'}.</p>`:''}
   ${spGratisView(m)}<dl class="sp-dl"><dt>N. gara e categoria</dt><dd>${esc(sp.numero||'—')} · ${esc(catTxt(sp.categoria))}</dd><dt>Dal</dt><dd>${fmtDow(sp.dal.data)} ${esc(sp.dal.ora)}${sp.dal.palestra?' · '+esc(sp.dal.palestra):''}</dd><dt>Al</dt><dd><b>${fmtDow(sp.al.data)} ${esc(sp.al.ora)}</b></dd><dt>Palestra</dt><dd>${esc(sp.al.palestra||'—')}</dd><dt>Motivazione</dt><dd>${esc(sp.motivazione)}</dd></dl>
   ${sp.stato!=='approvata'?`<h3 style="margin:16px 0 6px">Disponibilità al nuovo orario</h3>${spCheckHtml(m,sp.al)}`:''}
   <h3 style="margin:16px 0 6px">Testo per comitato e società avversaria</h3><textarea class="paste sp-txt" readonly rows="12" aria-label="Testo della richiesta">${esc(txt)}</textarea>
@@ -3612,7 +3632,7 @@ function spView(m){const sp=m.spostamento;if(!sp){formSposta(m);return}const txt
   <div class="actions" style="margin-top:8px"><button type="button" class="btn" data-act="copy" data-text="${esc(txt)}">${I.copy}Copia testo</button><a class="btn" href="mailto:${esc(mail)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}" target="_blank" rel="noopener">${I.mail}Email${mail?'':' (scegli il destinatario)'}</a><a class="btn" href="https://wa.me/?text=${encodeURIComponent(txt)}" target="_blank" rel="noopener">${I.wa}WhatsApp</a>${av?.dir?.cell?`<a class="btn" href="${esc(waUrl(av.dir.cell,txt))}" target="_blank" rel="noopener">${I.wa}WhatsApp a ${esc(av.dir.nome||av.nome)}</a>`:''}</div>
   ${av?`<p class="hint">Società avversaria: ${esc(av.nome)}${av.dir?.nome?', dirigente responsabile '+esc(av.dir.nome):''}${av.dir?.email?' (l\'email è già tra i destinatari)':av.dir?.cell?' (solo cellulare nel comunicato)':''}.</p>`:canNew('avversari')?'<p class="hint">Per avere tra i destinatari anche la società avversaria, carica il comunicato FIPAV con i recapiti delle formazioni dalla pagina Partite.</p>':''}
   ${S.club.emailFipav?'':'<p class="hint">Suggerimento: l\'email del comitato FIPAV si imposta una volta sola nei dati della società (in alto a sinistra) e verrà proposta come destinatario.</p>'}
-  ${ap?`<h3 style="margin:18px 0 6px">Approvazione</h3><div class="actions">${sp.stato!=='approvata'?`<button type="button" class="btn pri" data-act="spApprove" data-id="${m.id}">Approva e sposta la gara</button>`:''}${pend?`<button type="button" class="btn" data-act="spReject" data-id="${m.id}">Rifiuta</button><button type="button" class="btn" data-act="spEdit" data-id="${m.id}">Modifica</button>`:`<button type="button" class="btn" data-act="spNew" data-id="${m.id}">Nuova richiesta</button>`}<button type="button" class="btn danger" data-act="spCancel" data-id="${m.id}">Elimina richiesta</button></div>
+  ${ap?`<h3 style="margin:18px 0 6px">Approvazione</h3><div class="actions">${sp.stato!=='approvata'?`<button type="button" class="btn pri" data-act="spApprove" data-id="${m.id}">Approva e sposta la gara</button>`:''}${pend?`<button type="button" class="btn" data-act="spReject" data-id="${m.id}">Rifiuta</button><button type="button" class="btn" data-act="spEdit" data-id="${m.id}">Modifica</button>`:`<button type="button" class="btn" data-act="spNew" data-id="${m.id}">Nuova richiesta</button>`}${canSpFull(m)?`<button type="button" class="btn danger" data-act="spCancel" data-id="${m.id}">Elimina richiesta</button>`:pend?`<button type="button" class="btn danger" data-act="spCancel" data-id="${m.id}">Ritira richiesta</button>`:''}</div>
   <p class="hint">Approva quando lo spostamento è confermato (comitato e società avversaria): data, ora e palestra della gara diventano quelle richieste e non vengono sovrascritte dai prossimi import FIPAV.</p>`
   :w&&pend?`<h3 style="margin:18px 0 6px">La tua richiesta</h3><div class="actions"><button type="button" class="btn" data-act="spEdit" data-id="${m.id}">Modifica</button><button type="button" class="btn danger" data-act="spCancel" data-id="${m.id}">Ritira richiesta</button></div>
   <p class="hint">Possono approvarla ${esc(approvers(m))}.</p>`
@@ -3621,7 +3641,7 @@ function spView(m){const sp=m.spostamento;if(!sp){formSposta(m);return}const txt
   ${spStoricoHtml(m)}`);
 }
 /* chi approva, per il messaggio a chi chiede */
-function approvers(m){const L=segretari(m?.teamId);return[L.length?`la segreteria (${segNames(L)})`:'la segreteria','il responsabile del settore giovanile','gli amministratori'].join(', ').replace(/, ([^,]*)$/,' o $1')}
+function approvers(m){const L=segretari(m?.teamId);return[L.length?`la segreteria (${segNames(L)})`:'la segreteria','gli allenatori e i dirigenti della squadra','il responsabile del settore giovanile','gli amministratori'].join(', ').replace(/, ([^,]*)$/,' o $1')}
 function spApply(m,stato){const sp=m.spostamento;if(!sp||!canApprove(m))return;
   if(stato==='approvata'){const g=S.gyms.find(x=>norm(x.nome)===norm(sp.al.palestra)||(x.fipav&&norm(x.fipav)===norm(sp.al.palestra)));
     const ch=['data','ora'];m.data=sp.al.data;m.ora=sp.al.ora;
