@@ -841,6 +841,21 @@ tr.mute td{opacity:.55}
 .q-optr small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .imp-amb{border:1px solid color-mix(in srgb,var(--warn) 45%,transparent);background:var(--warn-soft);border-radius:10px;padding:4px 12px 10px;margin:10px 0}
 .imp-amb h3{margin:8px 0 2px}
+
+/* sovrapposizioni rilevate: intestazione che apre/chiude, filtro squadre a selezione multipla */
+.sv-h{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:8px;min-width:0}
+.sv-h h2{margin:0}
+.sv-h i{font-style:normal;color:var(--muted)}
+.sv-h:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+.panel.sv .panel-h>.sv-h+.pill,.panel.sv .panel-h>.sv-h+.ph-sp{margin-left:auto}
+.panel.sv.shut .panel-h{border-bottom:0}
+.sv-f{display:flex;flex-wrap:wrap;gap:6px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.sv-c{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border:1px solid var(--line);border-radius:999px;font-size:13px;font-weight:600;background:var(--surface);min-height:32px}
+.sv-c i{width:9px;height:9px;border-radius:50%;flex:none}
+.sv-c .num{color:var(--muted);font-weight:500}
+.sv-c:hover{border-color:var(--accent)}
+.sv-c.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.sv-c:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 </style>
 </head>
 <body class="boot">
@@ -2081,7 +2096,11 @@ function start(){
   const h=(location.hash||'').slice(1),mv=myViews();if(mv.includes(h))UI.view=h;if(!mv.includes(UI.view))UI.view=mv[0]||'dashboard';
   render();if(REMOTE)SYNC.timer=setTimeout(sync,POLL);preloadXlsx();
 }
-const UI={view:'dashboard',piKind:'athletes',pi:null,fa:{q:'',team:'',flag:''},fq:{team:'',stato:'open'},fd:{ruolo:''},fm:{team:'',solo:false,past:false,sp:false},gym:'g1',gymMulti:false,gymSel:[],wk:'',com:{team:'all',tipo:'famiglie',filtro:'',msg:''},imp:null,impName:'',scout:null,sc:{sel:null,pend:null,auto:(()=>{try{return localStorage.getItem('palleggio-scout-auto')!=='0'}catch(e){return true}})(),rapida:(()=>{try{return localStorage.getItem('palleggio-scout-rapida')==='1'}catch(e){return false}})(),dir:(()=>{try{return localStorage.getItem('palleggio-scout-dir')!=='0'}catch(e){return true}})()},scRep:{who:'',f:'A'}};
+/* pannello «Sovrapposizioni rilevate» (Partite): aperto/chiuso e squadre scelte restano sul dispositivo */
+const SV_KEY='palleggio-sovrapposizioni';
+const svLoad=()=>{try{const o=JSON.parse(localStorage.getItem(SV_KEY)||'{}');return{open:o.open!==false,teams:Array.isArray(o.teams)?o.teams:[]}}catch(e){return{open:true,teams:[]}}};
+const svSave=()=>{try{localStorage.setItem(SV_KEY,JSON.stringify(UI.sv))}catch(e){}};
+const UI={view:'dashboard',piKind:'athletes',pi:null,fa:{q:'',team:'',flag:''},fq:{team:'',stato:'open'},fd:{ruolo:''},fm:{team:'',solo:false,past:false,sp:false},gym:'g1',gymMulti:false,gymSel:[],wk:'',com:{team:'all',tipo:'famiglie',filtro:'',msg:''},imp:null,impName:'',scout:null,sc:{sel:null,pend:null,auto:(()=>{try{return localStorage.getItem('palleggio-scout-auto')!=='0'}catch(e){return true}})(),rapida:(()=>{try{return localStorage.getItem('palleggio-scout-rapida')==='1'}catch(e){return false}})(),dir:(()=>{try{return localStorage.getItem('palleggio-scout-dir')!=='0'}catch(e){return true}})()},scRep:{who:'',f:'A'},sv:svLoad()};
 UI.wk=iso(mondayOf(TODAY));
 UI.rq={stato:'richiesta',team:'',sel:[]};
 
@@ -2192,7 +2211,7 @@ function todoManage(){const L=[],A=S.athletes;
   else if(inS.length)L.push({k:'warn',ic:'med',t:plur(inS.length,'certificato in scadenza','certificati in scadenza'),s:'Entro 30 giorni',b:{act:'flag',id:'visita',l:'Vedi elenco'}});
   const mc=matchConflicts(),msc=matchSlotConflicts(),n=mc.length+msc.length;
   if(n){const f=[...mc.map(c=>({d:c.a.data,o:c.a.ora,x:[c.a,c.b]})),...msc.map(c=>({d:c.m.data,o:c.m.ora,x:[c.m,c.sl]}))].sort((x,y)=>(x.d+x.o).localeCompare(y.d+y.o))[0];
-    L.push({k:'warn',ic:'cal',t:`${plur(n,'sovrapposizione','sovrapposizioni')} nel calendario delle gare`,s:`La prima ${fmtDow(f.d)}: ${esc(sigle(f.x).replace(', ',' e '))}`,b:{act:'nav',id:'partite',l:'Risolvi'}})}
+    L.push({k:'warn',ic:'cal',t:`${plur(n,'sovrapposizione','sovrapposizioni')} nel calendario delle gare`,s:`La prima ${fmtDow(f.d)}: ${esc(sigle(f.x).replace(', ',' e '))}`,b:{act:'svOpen',id:'',l:'Risolvi'}})}
   const sc=slotConflicts();
   if(sc.length)L.push({k:'warn',ic:'gym',t:`${plur(sc.length,'sovrapposizione','sovrapposizioni')} tra allenamenti`,s:`${DAYS_FULL[sc[0].a.giorno]}: ${esc(sigle([sc[0].a,sc[0].b]).replace(', ',' e '))}`,b:{act:'nav',id:'palestre',l:'Vedi'}});
   if(canQuote()){const qs=A.map(quota).filter(Boolean),op=qs.filter(q=>q.r>0),lt=qs.filter(q=>q.late),sn=qs.filter(q=>q.soon);
@@ -2214,7 +2233,7 @@ function todoTeam(){const T=ME?.workTeams||[],L=[],mine=x=>T.includes(x.teamId);
   const mc=matchConflicts().filter(c=>mine(c.a)||mine(c.b)),msc=matchSlotConflicts().filter(c=>mine(c.m)||mine(c.sl)),n=mc.length+msc.length;
   if(n){const c=mc[0],x=msc[0],first=c&&(!x||byWhen(c.a,x.m)<=0)?{d:c.a.data,me:c.shared.some(p=>me.has(p.key)),t:`${esc(teamOf(c.a.teamId)?.sigla||'')} alle ${esc(c.a.ora)} e ${esc(teamOf(c.b.teamId)?.sigla||'')} alle ${esc(c.b.ora)}`,two:'a due gare'}
       :{d:x.m.data,me:x.tipo==='coach'&&(ME?.staffIds||[]).some(id=>x.who.includes(fullName(staffOf(id)))),t:`gara ${esc(teamOf(x.m.teamId)?.sigla||'')} alle ${esc(x.m.ora)} e allenamento ${esc(teamOf(x.sl.teamId)?.sigla||'')} alle ${esc(x.sl.inizio)}`,two:'a una gara e a un allenamento'};
-    L.push({k:'warn',ic:'swap',t:first.me?`${fmtDow(first.d)}: sei ${first.two}`:`${fmtDow(first.d)}: sovrapposizione delle tue squadre`,s:first.t+(n>1?` · altre ${n-1}`:''),b:{act:'nav',id:'partite',l:'Risolvi',pri:1}})}
+    L.push({k:'warn',ic:'swap',t:first.me?`${fmtDow(first.d)}: sei ${first.two}`:`${fmtDow(first.d)}: sovrapposizione delle tue squadre`,s:first.t+(n>1?` · altre ${n-1}`:''),b:{act:'svOpen',id:'mine',l:'Risolvi',pri:1}})}
   S.matches.filter(m=>mine(m)&&spPending(m)).sort(byWhen).slice(0,3).forEach(m=>{const sp=m.spostamento;
     L.push({k:canApprove(m)?'crit':'info',ic:'clock',t:`Spostamento ${esc(teamOf(m.teamId)?.sigla||'')} ${canApprove(m)?'da approvare':'in attesa'}`,s:`${fmtDow(m.data)} → ${fmtDow(sp.al.data)} ore ${esc(sp.al.ora)}${canApprove(m)?'':': lo approva la segreteria'}`,b:{act:'spView',id:m.id,l:'Apri'}})});
   if(inS.length)L.push({k:'warn',ic:'med',t:plur(inS.length,'certificato in scadenza','certificati in scadenza'),s:esc(inS.slice(0,3).map(fullName).join(', '))+(inS.length>3?'…':''),b:{act:'flag',id:'visita',l:'Vedi'}});
@@ -2291,6 +2310,20 @@ document.addEventListener('keydown',e=>{if(!e.target.matches?.('[data-gsearch]')
   if(e.key==='Escape'){searchClose();e.target.blur()}
   if(e.key==='Enter'){const b=e.target.parentElement.querySelector('.gres button');if(b){e.preventDefault();b.click()}}});
 document.addEventListener('click',e=>{if(!e.target.closest?.('.gsearch'))document.querySelectorAll('.gres').forEach(b=>b.hidden=true)});
+
+/* pannello «Sovrapposizioni rilevate»: si chiude toccando l'intestazione e si filtra per squadre (da una a tutte).
+   Aperto/chiuso e squadre scelte restano sul dispositivo; nessuna squadra scelta = tutte */
+/* squadre presenti nelle sovrapposizioni (anche ignorate), nell'ordine delle squadre, con quante ne restano da risolvere */
+function svTeams(mc,all){const ids=new Set(all.flatMap(c=>[c.a.teamId,c.b.teamId]));
+  return S.teams.filter(t=>ids.has(t.id)).map(t=>({t,n:mc.filter(c=>c.a.teamId===t.id||c.b.teamId===t.id).length}))}
+const svSel=L=>{const ok=new Set(L.map(x=>x.t.id));return UI.sv.teams.filter(id=>ok.has(id))};
+const svHit=(c,sel)=>!sel.length||sel.includes(c.a.teamId)||sel.includes(c.b.teamId);
+function svPanel(mc){const all=matchConflicts(true),T=svTeams(mc,all),sel=svSel(T),M=mc.filter(c=>svHit(c,sel)),ign=all.filter(c=>c.ign&&svHit(c,sel)),open=UI.sv.open;
+  const cnt=sel.length?`${M.length} di ${mc.length} da risolvere`:`${mc.length} da risolvere`;
+  const chips=T.length>1?`<div class="sv-f" role="group" aria-label="Filtra per squadra"><button type="button" class="sv-c ${sel.length?'':'on'}" data-act="svTeam" data-id="" aria-pressed="${!sel.length}">Tutte</button>${T.map(({t,n})=>{const on=sel.includes(t.id);
+    return`<button type="button" class="sv-c ${on?'on':''}" data-act="svTeam" data-id="${t.id}" aria-pressed="${on}"><i style="background:${esc(t.colore||'#666')}"></i>${esc(t.sigla)}${n?` <span class="num">${n}</span>`:''}</button>`}).join('')}</div>`:'';
+  return`<section class="panel sv${open?'':' shut'}" style="margin-bottom:16px"><div class="panel-h"><button type="button" class="sv-h" data-act="svToggle" aria-expanded="${open}"><h2>Sovrapposizioni rilevate</h2><i aria-hidden="true">${open?'▴':'▾'}</i></button>${spCnt(M.filter(c=>spPending(c.a)||spPending(c.b)).length)}${pill(mc.length?'crit':'ok',mc.length?cnt:'Nessuna')}${!open&&sel.length?`<span class="count">${esc(sel.map(id=>teamOf(id)?.sigla||'').join(', '))}</span>`:''}</div>
+  ${open?chips+(M.map(confHtml).join('')||(mc.length?'<div class="empty">Nessuna sovrapposizione da risolvere per le squadre scelte.</div>':''))+ignList(ign,confHtml):''}</section>`}
 
 /* sovrapposizione tra due gare: prima il motivo in una riga, poi le due gare (si aprono toccandole), un solo «Risolvi» */
 function confHtml(c){
@@ -2474,7 +2507,7 @@ V.partite={html(){const st=S.settings,mc=matchConflicts(),msc=matchSlotConflicts
     <label><input type="checkbox" id="s_all" data-set="checkAllenamenti" ${st.checkAllenamenti!==false?'checked':''}> Gare con allenamenti</label>
     <span class="hint">Due gare sono in conflitto se iniziano a meno di durata + margine (solo durata se nello stesso impianto) e hanno persone in comune.</span>
   </div></section>`:''}
-  <section class="panel" style="margin-bottom:16px"><div class="panel-h"><h2>Sovrapposizioni rilevate</h2>${spCnt(mc.filter(c=>spPending(c.a)||spPending(c.b)).length)}${pill(mc.length?'crit':'ok',mc.length?`${mc.length} da risolvere`:'Nessuna')}</div>${mc.map(confHtml).join('')}${ignList(matchConflicts(true).filter(c=>c.ign),confHtml)}</section>
+  ${svPanel(mc)}
   <section class="panel" style="margin-bottom:16px"><div class="panel-h"><h2>Gare e allenamenti</h2>${spCnt(msc.filter(c=>spPending(c.m)).length)}${pill(msc.length?'crit':'ok',msc.length?`${msc.length} da risolvere`:'Nessuna')}</div><div class="list">${msc.map(mscHtml).join('')}</div>${ignList(matchSlotConflicts(TODAY_ISO,true).filter(c=>c.ign),mscHtml)}</section>
   ${(()=>{const R=S.matches.filter(m=>m.spostamento&&(m.spostamento.stato==='richiesta'||m.data>=TODAY_ISO));return R.length?`<section class="panel" style="margin-bottom:16px"><div class="panel-h"><h2>Richieste di spostamento</h2>${pill(R.some(spPending)?'warn':'ok',`${R.filter(spPending).length} in approvazione`)}<button class="btn sm" type="button" data-act="nav" data-id="richieste">Tutte le richieste</button></div><div class="list">${R.sort((a,b)=>!!spPending(b)-!!spPending(a)).map(spRow).join('')}</div></section>`:''})()}
   <div class="filters"><select id="fm_team" data-f="fm.team" aria-label="Squadra">${teamOpts(UI.fm.team)}</select>
@@ -4263,6 +4296,10 @@ const ACT={
   txEdit:(el,id)=>formTasse(teamOf(id)),
   calOpen:(el,id)=>formCal(id),calGet:(el,id)=>calFile(id),
   calNew:el=>{if(!el.classList.contains('confirm')){el.classList.add('confirm');el.textContent='Conferma: i link vecchi smettono di funzionare';return}calLink(true)},
+  svToggle:()=>{UI.sv.open=!UI.sv.open;svSave();render()},
+  svTeam:(el,id)=>{const T=UI.sv.teams.filter(x=>teamOf(x));if(!id)UI.sv.teams=[];else{const i=T.indexOf(id);if(i<0)T.push(id);else T.splice(i,1);UI.sv.teams=T}svSave();render()},
+  /* dalla bacheca: pannello aperto, filtrato sulle proprie squadre ('mine') o su tutte */
+  svOpen:(el,id)=>{UI.sv.open=true;UI.sv.teams=id==='mine'?[...(ME?.workTeams||[])]:[];svSave();go('partite')},
   ptool:(el,id)=>{const cur=document.querySelector('.ptool.on')?.dataset.id;UI.ptool=cur===id?null:id;render()},
   rqSt:(el,id)=>{UI.rq.stato=id;UI.rq.sel=[];render()},
   rqAllSel:()=>{const L=rqList().map(m=>m.id);UI.rq.sel=UI.rq.sel.length===L.length?[]:L;render()},
