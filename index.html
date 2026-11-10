@@ -858,7 +858,7 @@ tr.mute td{opacity:.55}
 .sv-c:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 /* importazione: comandi a destra, elenco delle gare che «Sostituisci tutto» toglierebbe */
-.actions.end{justify-content:flex-end}
+.imp-act .imp-rep{margin-left:auto}
 .imp-loss{margin:8px 0 12px;padding-left:18px;font-size:13.5px;max-height:260px;overflow:auto}
 .imp-loss li{margin:3px 0}
 </style>
@@ -2556,8 +2556,8 @@ function importHtml(){
     <div class="map">${amb.map(g=>`<label class="field"><span>«${esc(g.nome)}» · ${esc(g.camp||'campionato non indicato')} · ${plur(g.n,'gara','gare')}</span><select data-imppick="${esc(g.key)}"><option value="">— scegli la squadra —</option>${g.cands.map(id=>`<option value="${id}">${esc(teamOf(id)?.sigla||'')} · ${esc(teamOf(id)?.nome||'')}${teamOf(id)?.campionato?' ('+esc(teamOf(id).campionato)+')':''}</option>`).join('')}<option value="-">Non importare queste gare</option></select></label>`).join('')}</div></section>`:''}
   <h3>Colonne riconosciute</h3><div class="map">${IMPORT_FIELDS.map(([k,l])=>`<label class="field"><span>${l}</span><select id="map_${k}" data-map="${k}"><option value="-1">— non presente —</option>${imp.header.map((h,i)=>`<option value="${i}" ${imp.map[k]===i?'selected':''}>${esc(h||'Colonna '+(i+1))}</option>`).join('')}</select></label>`).join('')}</div>
   <h3>Anteprima gare della società</h3><div class="tw" style="margin:8px 0 12px;max-height:280px;overflow:auto"><table><thead><tr><th>Data</th><th>Ora</th><th>Squadra</th><th>Casa – Ospite</th><th>Impianto</th></tr></thead><tbody>${ours.slice(0,40).map(p=>`<tr><td class="num nowrap">${p.data?fmtDow(p.data):'<span style="color:var(--crit)">?</span>'}</td><td class="num">${esc(p.ora)}</td><td>${chip(teamOf(p.teamId))}</td><td>${esc(p.casa)} – ${esc(p.ospite)}</td><td>${esc(p.impianto)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">Nessuna riga riconosciuta. Controlla le colonne Squadra casa/ospite e il nome FIPAV nelle schede squadra.</td></tr>'}</tbody></table></div>
-  <div class="actions end">${ME.admin?`<button class="btn danger" type="button" data-act="impReplace" ${ours.length?'':'disabled'}>Sostituisci tutto il calendario</button>`:''}<button class="btn" type="button" data-act="impCancel">Annulla</button><button class="btn pri" type="button" data-act="impMerge" ${ours.length?'':'disabled'}>Aggiorna calendario</button></div>
-  <p class="hint" style="text-align:right">Aggiorna calendario unisce per numero gara: le gare spostate da FIPAV vengono aggiornate, le nuove aggiunte.${ME.admin?' Sostituisci tutto toglie le gare importate che non sono nel file (chiede conferma).':''}</p>`;
+  <div class="actions imp-act"><button class="btn pri" type="button" data-act="impMerge" ${ours.length?'':'disabled'}>Aggiorna calendario</button><button class="btn" type="button" data-act="impCancel">Annulla</button>${ME.admin?`<button class="btn danger imp-rep" type="button" data-act="impReplace" ${ours.length?'':'disabled'}>Sostituisci tutto il calendario</button>`:''}</div>
+  <p class="hint">Aggiorna calendario unisce per numero gara: le gare spostate da FIPAV vengono aggiornate, le nuove aggiunte.${ME.admin?' Sostituisci tutto toglie le gare importate che non sono nel file (chiede conferma).':''}</p>`;
 }
 function bindImport(){bindDrop('#drop','#file',readFile)}
 function bindDrop(dSel,fSel,cb){
