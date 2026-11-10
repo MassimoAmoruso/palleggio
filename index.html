@@ -856,6 +856,11 @@ tr.mute td{opacity:.55}
 .sv-c:hover{border-color:var(--accent)}
 .sv-c.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
 .sv-c:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* importazione: comandi a destra, elenco delle gare che «Sostituisci tutto» toglierebbe */
+.actions.end{justify-content:flex-end}
+.imp-loss{margin:8px 0 12px;padding-left:18px;font-size:13.5px;max-height:260px;overflow:auto}
+.imp-loss li{margin:3px 0}
 </style>
 </head>
 <body class="boot">
@@ -1577,6 +1582,20 @@ function parseImport(imp,teams){
 function impAmbGroups(parsed){const G=new Map();parsed.forEach(p=>{if(!p.amb)return;const g=G.get(p.amb.key)||{...p.amb,n:0};g.n++;G.set(p.amb.key,g)});return[...G.values()]}
 /* dopo l'importazione: la squadra scelta ricorda il campionato, così la volta dopo si abbina da sola */
 function impRemember(imp){Object.entries(imp.pick||{}).forEach(([k,id])=>{const t=teamOf(id),camp=imp.pickCamp?.[k];if(!t||!camp||teamCamps(t).some(c=>catEq(c,camp)))return;t.campFipav=[...(t.campFipav||[]),camp]})}
+/* cosa toglierebbe «Sostituisci tutto il calendario»: gare importate (non a mano) che non sono nel file */
+function impReplaceLoss(st,parsed){const key=m=>m.numero||(m.data+norm(m.casa)+norm(m.ospite)),K=new Set(parsed.filter(p=>p.teamId&&p.data).map(key));
+  return st.matches.filter(m=>m.origine!=='manuale'&&!K.has(key(m)))}
+/* conferma: quante gare si tolgono, e quali hanno dati legati (scout, spostamenti, allenatore sostituito) */
+function formImpReplace(){if(!ME.admin||!UI.imp)return;const parsed=parseImport(UI.imp,S.teams),ok=parsed.filter(p=>p.teamId&&p.data),L=impReplaceLoss(S,parsed);
+  const sc=L.filter(m=>scRec(m.id)),sp=L.filter(m=>m.spostamento),so=L.filter(m=>m.staffGara),man=S.matches.filter(m=>m.origine==='manuale').length;
+  const row=m=>`<li>${fmtDow(m.data)} ${esc(m.ora)} · ${esc(teamOf(m.teamId)?.sigla||'')} · ${esc(m.casa)} – ${esc(m.ospite)}${scRec(m.id)?' · <b>scout</b>':''}${m.spostamento?' · <b>spostamento</b>':''}${m.staffGara?' · <b>allenatore sostituito</b>':''}</li>`;
+  openDrawer('Sostituire tutto il calendario?',`<p style="margin-top:0">Il calendario diventa quello del file <b>${esc(UI.impName)}</b>: ${plur(ok.length,'gara','gare')}.</p>
+  ${L.length?`<p>${pill('crit','Attenzione')} Verranno tolte <b>${plur(L.length,'gara importata','gare importate')}</b> che non sono nel file.</p>
+  ${sc.length+sp.length+so.length?`<p class="hint" style="color:var(--crit)">Tra queste: ${andJoin([sc.length&&plur(sc.length,'gara con lo scout','gare con lo scout'),sp.length&&plur(sp.length,'con spostamento richiesto','con spostamento richiesto'),so.length&&plur(so.length,'con allenatore sostituito','con allenatore sostituito')].filter(Boolean))}: questi dati non saranno più collegati al calendario.</p>`:''}
+  <ul class="imp-loss">${L.slice(0,30).map(row).join('')}${L.length>30?`<li class="meta">… e altre ${L.length-30}</li>`:''}</ul>`:'<p>Nessuna gara verrà tolta: tutte quelle in calendario sono anche nel file.</p>'}
+  <p class="hint">${man?`Restano ${man===1?'la gara inserita':`le ${man} gare inserite`} a mano e i campi modificati a mano.`:'Restano i campi modificati a mano.'} Se vuoi solo aggiungere le nuove gare e aggiornare quelle spostate, annulla e usa «Aggiorna calendario».</p>`,
+  {saveLabel:'Sì, sostituisci tutto',onSave:()=>{if(!ME.admin)return false;const r=applyImport(S,parseImport(UI.imp,S.teams),'replace');impRemember(UI.imp);UI.imp=null;return`Calendario sostituito: ${r.add} gare nuove, ${r.upd} aggiornate`}});
+  {const b=$('#dFoot .btn.pri');if(b){b.classList.remove('pri');b.classList.add('danger','confirm')}}}
 function applyImport(st,parsed,mode){
   const ok=parsed.filter(p=>p.teamId&&p.data),key=m=>m.numero||(m.data+norm(m.casa)+norm(m.ospite)),old=st.matches;
   /* "sostituisci" tiene le gare inserite a mano; i campi modificati a mano (lock) non vengono sovrascritti */
@@ -2098,7 +2117,7 @@ function start(){
 }
 /* pannello «Sovrapposizioni rilevate» (Partite): aperto/chiuso e squadre scelte restano sul dispositivo */
 const SV_KEY='palleggio-sovrapposizioni';
-const svLoad=()=>{try{const o=JSON.parse(localStorage.getItem(SV_KEY)||'{}');return{open:o.open!==false,teams:Array.isArray(o.teams)?o.teams:[]}}catch(e){return{open:true,teams:[]}}};
+const svLoad=()=>{try{const o=JSON.parse(localStorage.getItem(SV_KEY)||'{}');return{open:o.open!==false,teams:Array.isArray(o.teams)?o.teams:[],shut:Array.isArray(o.shut)?o.shut:[]}}catch(e){return{open:true,teams:[],shut:[]}}};
 const svSave=()=>{try{localStorage.setItem(SV_KEY,JSON.stringify(UI.sv))}catch(e){}};
 const UI={view:'dashboard',piKind:'athletes',pi:null,fa:{q:'',team:'',flag:''},fq:{team:'',stato:'open'},fd:{ruolo:''},fm:{team:'',solo:false,past:false,sp:false},gym:'g1',gymMulti:false,gymSel:[],wk:'',com:{team:'all',tipo:'famiglie',filtro:'',msg:''},imp:null,impName:'',scout:null,sc:{sel:null,pend:null,auto:(()=>{try{return localStorage.getItem('palleggio-scout-auto')!=='0'}catch(e){return true}})(),rapida:(()=>{try{return localStorage.getItem('palleggio-scout-rapida')==='1'}catch(e){return false}})(),dir:(()=>{try{return localStorage.getItem('palleggio-scout-dir')!=='0'}catch(e){return true}})()},scRep:{who:'',f:'A'},sv:svLoad()};
 UI.wk=iso(mondayOf(TODAY));
@@ -2317,6 +2336,9 @@ document.addEventListener('click',e=>{if(!e.target.closest?.('.gsearch'))documen
 function svTeams(mc,all){const ids=new Set(all.flatMap(c=>[c.a.teamId,c.b.teamId]));
   return S.teams.filter(t=>ids.has(t.id)).map(t=>({t,n:mc.filter(c=>c.a.teamId===t.id||c.b.teamId===t.id).length}))}
 const svSel=L=>{const ok=new Set(L.map(x=>x.t.id));return UI.sv.teams.filter(id=>ok.has(id))};
+/* altri riquadri di Partite richiudibili (gare e allenamenti 'ga', richieste di spostamento 'rs'): chiusi = elencati in UI.sv.shut */
+const pOpen=k=>!(UI.sv.shut||[]).includes(k);
+const pHead=(k,t)=>`<button type="button" class="sv-h" data-act="pToggle" data-id="${k}" aria-expanded="${pOpen(k)}"><h2>${t}</h2><i aria-hidden="true">${pOpen(k)?'▴':'▾'}</i></button>`;
 const svHit=(c,sel)=>!sel.length||sel.includes(c.a.teamId)||sel.includes(c.b.teamId);
 function svPanel(mc){const all=matchConflicts(true),T=svTeams(mc,all),sel=svSel(T),M=mc.filter(c=>svHit(c,sel)),ign=all.filter(c=>c.ign&&svHit(c,sel)),open=UI.sv.open;
   const cnt=sel.length?`${M.length} di ${mc.length} da risolvere`:`${mc.length} da risolvere`;
@@ -2508,8 +2530,8 @@ V.partite={html(){const st=S.settings,mc=matchConflicts(),msc=matchSlotConflicts
     <span class="hint">Due gare sono in conflitto se iniziano a meno di durata + margine (solo durata se nello stesso impianto) e hanno persone in comune.</span>
   </div></section>`:''}
   ${svPanel(mc)}
-  <section class="panel" style="margin-bottom:16px"><div class="panel-h"><h2>Gare e allenamenti</h2>${spCnt(msc.filter(c=>spPending(c.m)).length)}${pill(msc.length?'crit':'ok',msc.length?`${msc.length} da risolvere`:'Nessuna')}</div><div class="list">${msc.map(mscHtml).join('')}</div>${ignList(matchSlotConflicts(TODAY_ISO,true).filter(c=>c.ign),mscHtml)}</section>
-  ${(()=>{const R=S.matches.filter(m=>m.spostamento&&(m.spostamento.stato==='richiesta'||m.data>=TODAY_ISO));return R.length?`<section class="panel" style="margin-bottom:16px"><div class="panel-h"><h2>Richieste di spostamento</h2>${pill(R.some(spPending)?'warn':'ok',`${R.filter(spPending).length} in approvazione`)}<button class="btn sm" type="button" data-act="nav" data-id="richieste">Tutte le richieste</button></div><div class="list">${R.sort((a,b)=>!!spPending(b)-!!spPending(a)).map(spRow).join('')}</div></section>`:''})()}
+  <section class="panel sv${pOpen('ga')?'':' shut'}" style="margin-bottom:16px"><div class="panel-h">${pHead('ga','Gare e allenamenti')}${spCnt(msc.filter(c=>spPending(c.m)).length)}${pill(msc.length?'crit':'ok',msc.length?`${msc.length} da risolvere`:'Nessuna')}</div>${pOpen('ga')?`<div class="list">${msc.map(mscHtml).join('')}</div>${ignList(matchSlotConflicts(TODAY_ISO,true).filter(c=>c.ign),mscHtml)}`:''}</section>
+  ${(()=>{const R=S.matches.filter(m=>m.spostamento&&(m.spostamento.stato==='richiesta'||m.data>=TODAY_ISO));return R.length?`<section class="panel sv${pOpen('rs')?'':' shut'}" style="margin-bottom:16px"><div class="panel-h">${pHead('rs','Richieste di spostamento')}${pill(R.some(spPending)?'warn':'ok',`${R.filter(spPending).length} in approvazione`)}<button class="btn sm" type="button" data-act="nav" data-id="richieste">Tutte le richieste</button></div>${pOpen('rs')?`<div class="list">${R.sort((a,b)=>!!spPending(b)-!!spPending(a)).map(spRow).join('')}</div>`:''}</section>`:''})()}
   <div class="filters"><select id="fm_team" data-f="fm.team" aria-label="Squadra">${teamOpts(UI.fm.team)}</select>
   <label class="check"><input type="checkbox" id="fm_solo" data-f="fm.solo" ${UI.fm.solo?'checked':''}> Solo partite in conflitto</label>
   <label class="check"><input type="checkbox" id="fm_sp" data-f="fm.sp" ${UI.fm.sp?'checked':''}> Solo con spostamento richiesto</label>
@@ -2534,8 +2556,8 @@ function importHtml(){
     <div class="map">${amb.map(g=>`<label class="field"><span>«${esc(g.nome)}» · ${esc(g.camp||'campionato non indicato')} · ${plur(g.n,'gara','gare')}</span><select data-imppick="${esc(g.key)}"><option value="">— scegli la squadra —</option>${g.cands.map(id=>`<option value="${id}">${esc(teamOf(id)?.sigla||'')} · ${esc(teamOf(id)?.nome||'')}${teamOf(id)?.campionato?' ('+esc(teamOf(id).campionato)+')':''}</option>`).join('')}<option value="-">Non importare queste gare</option></select></label>`).join('')}</div></section>`:''}
   <h3>Colonne riconosciute</h3><div class="map">${IMPORT_FIELDS.map(([k,l])=>`<label class="field"><span>${l}</span><select id="map_${k}" data-map="${k}"><option value="-1">— non presente —</option>${imp.header.map((h,i)=>`<option value="${i}" ${imp.map[k]===i?'selected':''}>${esc(h||'Colonna '+(i+1))}</option>`).join('')}</select></label>`).join('')}</div>
   <h3>Anteprima gare della società</h3><div class="tw" style="margin:8px 0 12px;max-height:280px;overflow:auto"><table><thead><tr><th>Data</th><th>Ora</th><th>Squadra</th><th>Casa – Ospite</th><th>Impianto</th></tr></thead><tbody>${ours.slice(0,40).map(p=>`<tr><td class="num nowrap">${p.data?fmtDow(p.data):'<span style="color:var(--crit)">?</span>'}</td><td class="num">${esc(p.ora)}</td><td>${chip(teamOf(p.teamId))}</td><td>${esc(p.casa)} – ${esc(p.ospite)}</td><td>${esc(p.impianto)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">Nessuna riga riconosciuta. Controlla le colonne Squadra casa/ospite e il nome FIPAV nelle schede squadra.</td></tr>'}</tbody></table></div>
-  <div class="actions"><button class="btn pri" type="button" data-act="impMerge" ${ours.length?'':'disabled'}>Aggiorna calendario</button><button class="btn" type="button" data-act="impReplace" ${ours.length?'':'disabled'}>Sostituisci tutto il calendario</button><button class="btn" type="button" data-act="impCancel">Annulla</button></div>
-  <p class="hint">Aggiorna calendario unisce per numero gara: le gare spostate da FIPAV vengono aggiornate, le nuove aggiunte.</p>`;
+  <div class="actions end">${ME.admin?`<button class="btn danger" type="button" data-act="impReplace" ${ours.length?'':'disabled'}>Sostituisci tutto il calendario</button>`:''}<button class="btn" type="button" data-act="impCancel">Annulla</button><button class="btn pri" type="button" data-act="impMerge" ${ours.length?'':'disabled'}>Aggiorna calendario</button></div>
+  <p class="hint" style="text-align:right">Aggiorna calendario unisce per numero gara: le gare spostate da FIPAV vengono aggiornate, le nuove aggiunte.${ME.admin?' Sostituisci tutto toglie le gare importate che non sono nel file (chiede conferma).':''}</p>`;
 }
 function bindImport(){bindDrop('#drop','#file',readFile)}
 function bindDrop(dSel,fSel,cb){
@@ -4296,6 +4318,7 @@ const ACT={
   txEdit:(el,id)=>formTasse(teamOf(id)),
   calOpen:(el,id)=>formCal(id),calGet:(el,id)=>calFile(id),
   calNew:el=>{if(!el.classList.contains('confirm')){el.classList.add('confirm');el.textContent='Conferma: i link vecchi smettono di funzionare';return}calLink(true)},
+  pToggle:(el,id)=>{const L=(UI.sv.shut||[]).filter(k=>k!==id);if(pOpen(id))L.push(id);UI.sv.shut=L;svSave();render()},
   svToggle:()=>{UI.sv.open=!UI.sv.open;svSave();render()},
   svTeam:(el,id)=>{const T=UI.sv.teams.filter(x=>teamOf(x));if(!id)UI.sv.teams=[];else{const i=T.indexOf(id);if(i<0)T.push(id);else T.splice(i,1);UI.sv.teams=T}svSave();render()},
   /* dalla bacheca: pannello aperto, filtrato sulle proprie squadre ('mine') o su tutte */
@@ -4326,7 +4349,7 @@ const ACT={
   delParent:el=>el.closest('.prow').remove(),
   linkParents:()=>{const pm=parentMatches();pm.forEach(({a,d})=>linkParent(a,d));save();render();toast(`${pm.length} genitori collegati alla scheda dirigente`)},
   impMerge:()=>{const r=applyImport(S,parseImport(UI.imp,S.teams),'merge');impRemember(UI.imp);UI.imp=null;save();render();toast(`${r.add} gare aggiunte, ${r.upd} aggiornate`)},
-  impReplace:()=>{const r=applyImport(S,parseImport(UI.imp,S.teams),'replace');impRemember(UI.imp);UI.imp=null;save();render();toast(`Calendario sostituito: ${r.add} gare`)},
+  impReplace:()=>formImpReplace(),
   tpl:(el,id)=>{UI.com.msg=TPL[id];if(id==='visita'){UI.com.filtro='visita';UI.com.tipo='famiglie'}else if(id==='quota'){UI.com.filtro='quota';UI.com.tipo='famiglie'}else if(id==='sollecitoRata'){UI.com.filtro=quotaAny('late')?'late':'soon';UI.com.tipo='famiglie'}else if(id==='sostituto'){UI.com.filtro='sost';UI.com.tipo='staff'}else UI.com.filtro='';render()},
   more:()=>openMenu(),club:()=>formClub(),
   reset:el=>{if(!el.classList.contains('confirm')){el.classList.add('confirm');el.textContent='Conferma: cancella le modifiche';return}
