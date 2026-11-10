@@ -861,6 +861,17 @@ tr.mute td{opacity:.55}
 .imp-act .imp-rep{margin-left:auto}
 .imp-loss{margin:8px 0 12px;padding-left:18px;font-size:13.5px;max-height:260px;overflow:auto}
 .imp-loss li{margin:3px 0}
+
+/* «Vedi come»: barra sempre in vista durante l'anteprima */
+.pv-bar{position:sticky;top:0;z-index:30;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 14px;margin:0 0 12px;border:1px solid var(--warn);border-radius:10px;background:color-mix(in srgb,var(--warn) 14%,var(--surface));font-size:13.5px}
+.pv-bar>svg{width:18px;height:18px;flex:none;color:var(--warn)}
+.pv-bar>span{flex:1 1 220px;min-width:0}
+.pv-tl{font-size:13px;color:var(--muted);margin:12px 0 6px}
+.pv-teams{display:grid;gap:2px;max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:4px}
+.pv-teams label{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;min-width:0}
+.pv-teams label:hover{background:var(--accent-soft)}
+.pv-teams input{width:18px;height:18px;margin:0;flex:none}
+.pv-teams label>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body class="boot">
@@ -1426,6 +1437,7 @@ const I={
   fam:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="5.5" r="2.3"/><circle cx="14" cy="8" r="1.8"/><path d="M2.5 17c0-3 2-5 4.5-5s4.5 2 4.5 5M11.5 17c0-2.2 1.1-3.8 2.5-3.8s2.5 1.6 2.5 3.8"/></svg>',
   key:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="10" r="3.5"/><path d="M10.5 10H18M15 10v3M17.5 10v2"/></svg>',
   out:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 4H4v12h8M9 10h9M15 7l3 3-3 3"/></svg>',
+  eye:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1.5 10S4.5 4.5 10 4.5 18.5 10 18.5 10 15.5 15.5 10 15.5 1.5 10 1.5 10Z"/><circle cx="10" cy="10" r="2.6"/></svg>',
   sync:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M16 8a6 6 0 0 0-11-2M4 12a6 6 0 0 0 11 2M5 2.5V6h3.5M15 17.5V14h-3.5"/></svg>',
 };
 
@@ -1800,9 +1812,10 @@ function labelOf(c,o){if(!o)return'';switch(c){
   case'scout':{const m=S.matches.find(x=>x.id===o.matchId);return`Scout · ${m?`${fmtD(m.data)} ${m.casa} – ${m.ospite}`:o.matchId}`}
   case'avversari':return`${o.nome}${o.campionato?' · '+o.campionato:''}`}
   return''}
-function snapshot(){const m=new Map(),put=(c,id,o)=>m.set(c+'/'+id,{c,id,o,json:JSON.stringify(o)});
-  put('config','club',S.club);put('config','settings',S.settings);
-  for(const c of COLLS)for(const o of S[c])put(c,o.id,o);
+/* durante «Vedi come» S contiene i dati filtrati: il confronto con il server si fa sempre sui dati completi */
+function snapshot(){const m=new Map(),put=(c,id,o)=>m.set(c+'/'+id,{c,id,o,json:JSON.stringify(o)}),D=FULLDATA||S;
+  put('config','club',D.club);put('config','settings',D.settings);
+  for(const c of COLLS)for(const o of D[c])put(c,o.id,o);
   return m}
 /* come snapshot, solo per i record indicati ('scout/sc123'…) */
 function snapOf(keys){const m=new Map();
@@ -1840,7 +1853,7 @@ function pendingChanges(snap=snapshot(),keys=null){const out=[];
 /* c'è qualcosa da salvare? Durante lo scout guarda solo i record segnati, senza confrontare tutti i dati */
 const anyPending=()=>SYNC.full?pendingChanges().length>0:SYNC.dirty.size>0&&pendingChanges(snapOf(SYNC.dirty),[...SYNC.dirty]).length>0;
 /* record locale (null se non c'è) */
-function localRec(c,id){if(c==='config')return id==='club'?S.club:id==='settings'?S.settings:null;return(S[c]||[]).find(x=>x.id===id)||null}
+function localRec(c,id){const D=FULLDATA||S;if(c==='config')return id==='club'?D.club:id==='settings'?D.settings:null;return(D[c]||[]).find(x=>x.id===id)||null}
 /* sostituisce il record sul posto, così i riferimenti già in uso restano validi */
 function applyRecord(c,id,json){let o=null;if(json!=null){try{o=JSON.parse(json)}catch(e){return}}
   const swap=(t,o)=>{for(const k of Object.keys(t))delete t[k];Object.assign(t,o)};
@@ -1925,6 +1938,7 @@ function alignAll(r,baseNow){const srv=new Map(r.records.map(x=>[x.c+'/'+x.id,x]
   Object.assign(SYNC,{version:r.version,user:r.user||SYNC.user,url:r.url||'',appUrl:r.appUrl||'',me:r.me,at:new Date(),dataDirty:true});ME=r.me;
   return n}
 async function refreshAll(gen){
+  if(FULLDATA)previewAs('');/* ricarica durante «Vedi come»: prima si torna ai dati completi */
   SYNC.busy=true;clearTimeout(SYNC.timer);clearTimeout(SYNC.deb);
   const baseNow=new Map([...SYNC.base].map(([k,b])=>[k,b.json]));
   try{const r=await gs('caricaTutto',getToken(),devLabel());
@@ -1952,6 +1966,7 @@ function restorePending(){let p=null;try{p=JSON.parse(localStorage.getItem(PEND_
 
 async function sync(){
   if(!REMOTE||!SYNC.ready)return;
+  if(FULLDATA)return;/* «Vedi come»: dati filtrati, niente confronto con il server; si riprende uscendo dall'anteprima */
   if(SYNC.busy){SYNC.again=true;return}
   clearTimeout(SYNC.timer);clearTimeout(SYNC.deb);
   /* eliminazione appena fatta: si aspetta che passi il tempo per annullarla */
@@ -2097,7 +2112,7 @@ function linkScreen(link,msg){
 document.addEventListener('input',e=>{if(e.target.id!=='lg_code')return;const v=e.target.value.replace(/\D/g,'');if(v.length!==6)return;
   const f=e.target.form,b=f?.querySelector('[type=submit]');if(b&&!b.disabled){try{f.requestSubmit()}catch(x){b.click()}}});
 /* sessione scaduta o revocata, oppure uscita: si torna all'accesso senza dati in memoria */
-function logoutLocal(msg){setToken('');dropData();SYNC.gen++;ME=null;S=blank();SYNC.ready=false;SYNC.base=new Map();clearTimeout(SYNC.timer);clearTimeout(SYNC.deb);LOGIN.step='email';if(!$('#drawer').hidden)closeDrawer();loginScreen(msg)}
+function logoutLocal(msg){FULLDATA=null;REALME=null;setToken('');dropData();SYNC.gen++;ME=null;S=blank();SYNC.ready=false;SYNC.base=new Map();clearTimeout(SYNC.timer);clearTimeout(SYNC.deb);LOGIN.step='email';if(!$('#drawer').hidden)closeDrawer();loginScreen(msg)}
 document.addEventListener('submit',async e=>{if(e.target.id!=='loginForm')return;e.preventDefault();const b=e.target.querySelector('[type=submit]');b.disabled=true;
   try{
     if(LOGIN.step==='email'){const v=$('#lg_email').value.trim().toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)){b.disabled=false;loginScreen('Scrivi un indirizzo email valido');return}
@@ -2119,7 +2134,7 @@ function start(){
 const SV_KEY='palleggio-sovrapposizioni';
 const svLoad=()=>{try{const o=JSON.parse(localStorage.getItem(SV_KEY)||'{}');return{open:o.open!==false,teams:Array.isArray(o.teams)?o.teams:[],shut:Array.isArray(o.shut)?o.shut:[]}}catch(e){return{open:true,teams:[],shut:[]}}};
 const svSave=()=>{try{localStorage.setItem(SV_KEY,JSON.stringify(UI.sv))}catch(e){}};
-const UI={view:'dashboard',piKind:'athletes',pi:null,fa:{q:'',team:'',flag:''},fq:{team:'',stato:'open'},fd:{ruolo:''},fm:{team:'',solo:false,past:false,sp:false},gym:'g1',gymMulti:false,gymSel:[],wk:'',com:{team:'all',tipo:'famiglie',filtro:'',msg:''},imp:null,impName:'',scout:null,sc:{sel:null,pend:null,auto:(()=>{try{return localStorage.getItem('palleggio-scout-auto')!=='0'}catch(e){return true}})(),rapida:(()=>{try{return localStorage.getItem('palleggio-scout-rapida')==='1'}catch(e){return false}})(),dir:(()=>{try{return localStorage.getItem('palleggio-scout-dir')!=='0'}catch(e){return true}})()},scRep:{who:'',f:'A'},sv:svLoad()};
+const UI={view:'dashboard',piKind:'athletes',pi:null,fa:{q:'',team:'',flag:''},fq:{team:'',stato:'open'},fd:{ruolo:''},fm:{team:'',solo:false,past:false,sp:false},gym:'g1',gymMulti:false,gymSel:[],wk:'',com:{team:'all',tipo:'famiglie',filtro:'',msg:''},imp:null,impName:'',scout:null,sc:{sel:null,pend:null,auto:(()=>{try{return localStorage.getItem('palleggio-scout-auto')!=='0'}catch(e){return true}})(),rapida:(()=>{try{return localStorage.getItem('palleggio-scout-rapida')==='1'}catch(e){return false}})(),dir:(()=>{try{return localStorage.getItem('palleggio-scout-dir')!=='0'}catch(e){return true}})()},scRep:{who:'',f:'A'},sv:svLoad(),pv:{ruolo:'dir',teams:[]}};
 UI.wk=iso(mondayOf(TODAY));
 UI.rq={stato:'richiesta',team:'',sel:[]};
 
@@ -2147,30 +2162,75 @@ function renderNav(){
   $('#clubName').textContent=S.club.nome;$('#season').textContent=S.club.stagione;
   $('#tbClub').textContent=S.club.nome;$('#tbSeason').textContent='Stagione '+S.club.stagione;
   $('#sideFoot').innerHTML=`<div class="sync" data-sync><i></i><span></span></div>`+whoHtml()+temaHtml()+(REMOTE
-    ?`${SYNC.url?`<a href="${esc(SYNC.url)}" target="_blank" rel="noopener">Apri il foglio Google</a>`:''}<button type="button" data-act="reload">Ricarica dati</button><button type="button" data-act="devices">Dispositivi collegati</button><button type="button" data-act="logout">Esci</button>`
-    :`<span>Prototipo con dati di esempio. Le modifiche restano in questo browser.</span>${previewSelect()}<button type="button" data-act="reset">Ripristina dati demo</button>`);
+    ?`${SYNC.url?`<a href="${esc(SYNC.url)}" target="_blank" rel="noopener">Apri il foglio Google</a>`:''}${canPreview()?`<button type="button" data-act="pvOpen">Vedi come…</button>`:''}<button type="button" data-act="reload">Ricarica dati</button><button type="button" data-act="devices">Dispositivi collegati</button><button type="button" data-act="logout">Esci</button>`
+    :`<span>Prototipo con dati di esempio. Le modifiche restano in questo browser.</span>${canPreview()?`<button type="button" data-act="pvOpen">Vedi come un ruolo…</button>`:''}${previewSelect()}<button type="button" data-act="reset">Ripristina dati demo</button>`);
   renderStatus();
 }
 /* chi è collegato e con quali ruoli */
 const whoHtml=()=>ME&&(REMOTE||ME.preview)?`<div class="who-box"><b>${esc(ME.nome||ME.email)}</b>${ME.nome?`<span>${esc(ME.email)}</span>`:''}<span>${esc(ME.ruoli.join(' · '))}</span></div>`:'';
-/* prototipo: "Vedi come" mostra l'app come la vedrebbe un altro utente, con gli stessi filtri del server */
-let FULLDATA=null;
-function previewSelect(){const D=FULLDATA||S,o=[['','Amministratore (tutto)']];
-  D.utenti.filter(u=>u.ruolo==='giovanile').forEach(u=>o.push([u.email,`Resp. giovanile · ${u.nome||u.email}`]));
-  D.staff.filter(p=>p.email&&D.teams.some(t=>t.staff?.allenatore===p.id)).forEach(p=>o.push([p.email,`Allenatore · ${fullName(p)}`]));
-  D.dirigenti.filter(d=>d.email).forEach(d=>o.push([d.email,`Dirigente · ${fullName(d)}`]));
-  D.athletes.filter(isMinor).map(a=>({a,g:permParents(a).find(g=>g.email&&!g.dirId)})).filter(x=>x.g).slice(0,6).forEach(({a,g})=>o.push([g.email,`${g.rel||'Genitore'} di ${fullName(a)}`]));
-  return`<label class="preview"><span>Vedi come</span><select id="previewAs">${o.map(([v,l])=>`<option value="${esc(v)}" ${v===(ME?.preview?ME.email:'')?'selected':''}>${esc(l)}</option>`).join('')}</select></label>`}
+/* «Vedi come»: l'amministratore guarda l'app come un'altra persona o come un ruolo su squadre a scelta (es. dirigente
+   di due squadre). I dati mostrati passano per gli stessi filtri del server (permView): si vede solo quello che vedrebbe
+   quel ruolo. Le modifiche sono disattivate (P.preview) e, con il foglio Google, la sincronizzazione resta ferma finché
+   non si esce: i dati filtrati non devono mai essere confrontati con quelli del server né salvati */
+let FULLDATA=null,REALME=null;
+const realMe=()=>FULLDATA?REALME:ME;
+const canPreview=()=>!!realMe()?.admin;
+const PV_RUOLI=[['dir','Dirigente'],['coach','Allenatore'],['staff','Secondo allenatore o altro staff'],['giov','Responsabile giovanile'],['segr','Segreteria'],['fam','Genitore']];
+/* persone reali da scegliere: chi ha un'email e un ruolo nell'anagrafica */
+function pvPeople(D){const o=[],seen=new Set(),add=(e,l)=>{e=String(e||'').trim().toLowerCase();if(e&&!seen.has(e)){seen.add(e);o.push([e,l])}};
+  const sig=ids=>(ids||[]).map(id=>D.teams.find(t=>t.id===id)?.sigla).filter(Boolean).join(', ');
+  D.utenti.filter(u=>u.ruolo==='giovanile').forEach(u=>add(u.email,`Resp. giovanile · ${u.nome||u.email}`));
+  D.utenti.filter(u=>u.ruolo==='segreteria').forEach(u=>add(u.email,`Segreteria · ${u.nome||u.email}`));
+  D.staff.filter(p=>p.email&&permStaffTeams(D,p.id).length).forEach(p=>add(p.email,`${D.teams.some(t=>t.staff?.allenatore===p.id)?'Allenatore':'Staff'} · ${fullName(p)} (${sig(permStaffTeams(D,p.id))})`));
+  D.dirigenti.filter(d=>d.email).forEach(d=>add(d.email,`Dirigente · ${fullName(d)}${d.teams?.length?` (${sig(d.teams)})`:''}`));
+  D.athletes.filter(isMinor).map(a=>({a,g:permParents(a).find(g=>g.email&&!g.dirId&&!g.staffId)})).filter(x=>x.g).sort((x,y)=>fullName(x.a).localeCompare(fullName(y.a))).forEach(({a,g})=>add(g.email,`${g.rel||'Genitore'} di ${fullName(a)}`));
+  return o}
+/* profilo simulato: un ruolo su alcune squadre, senza una persona reale dietro (stessi campi di profileFor) */
+function profileSim(role,teams,D){const T=D.teams.filter(t=>teams.includes(t.id)).map(t=>t.id),sig=T.map(id=>D.teams.find(t=>t.id===id).sigla).join(', ');
+  const P={...adminProfile(''),admin:false,ruoli:[],sim:role};
+  if(role==='dir'){P.dirTeams=T;P.dirIds=['~anteprima'];P.ruoli.push('Dirigente '+sig)}
+  else if(role==='coach'){P.coachTeams=T;P.staffTeams=T;P.staffIds=['~anteprima'];P.ruoli.push('Allenatore '+sig)}
+  else if(role==='staff'){P.staffTeams=T;P.staffIds=['~anteprima'];P.ruoli.push('Staff '+sig)}
+  else if(role==='giov'){P.giov=true;P.giovTeams=T;P.giovAll=T.length===D.teams.length;P.ruoli.push(P.giovAll?'Responsabile settore giovanile':'Responsabile giovanile ('+sig+')')}
+  else if(role==='segr'){P.segr=true;P.segrTeams=T;P.segrAll=T.length===D.teams.length;P.ruoli.push(P.segrAll?'Segreteria':'Segreteria ('+sig+')')}
+  else if(role==='fam'){/* un'atleta per squadra scelta, la prima in ordine alfabetico: le famiglie vedono a partire dai figli */
+    const K=T.map(id=>D.athletes.filter(a=>(a.teams||[]).includes(id)).sort((x,y)=>fullName(x).localeCompare(fullName(y)))[0]).filter(Boolean);
+    P.children=permUniq(K.map(a=>a.id));P.famTeams=permUniq(K.flatMap(a=>a.teams||[]));P.ruoli.push('Genitore di '+(K.map(a=>a.nome).join(', ')||'nessuna atleta'))}
+  P.workTeams=permUniq([...P.giovTeams,...P.staffTeams,...P.dirTeams]);
+  P.nome=(PV_RUOLI.find(r=>r[0]===role)?.[1]||'Ruolo')+' (simulato)';P.key='sim:'+role+':'+T.join(',');
+  return P}
 function redactAll(D,P){const o=JSON.parse(JSON.stringify({club:D.club,settings:D.settings}));
   for(const c of COLLS)o[c]=JSON.parse(JSON.stringify(D[c].map(r=>{const d=permView(P,c,r,D);return d?permRedact(r,d):null}).filter(Boolean)));return o}
-function previewAs(email){if(FULLDATA){S=FULLDATA;FULLDATA=null}
-  if(!email)ME=adminProfile('');
-  else{const P=profileFor(email,S,'');if(!P){toast('Nessun profilo per questa email');ME=adminProfile('');render();return}P.preview=true;FULLDATA=S;S=redactAll(FULLDATA,P);ME=P}
-  if(!myViews().includes(UI.view))UI.view=myViews()[0];render();
-  if(ME.preview)toast(`Anteprima come ${ME.nome||email}: le modifiche sono disattivate`,4000)}
+/* x: '' = esci; email = persona reale; profilo = ruolo simulato. Restituisce il messaggio da mostrare */
+function previewAs(x){
+  if(FULLDATA){S=FULLDATA;FULLDATA=null;ME=REALME;REALME=null}
+  if(x&&ME?.admin){const P=typeof x==='string'?profileFor(x,S,''):x;
+    if(!P){render();return'Nessun profilo per questa email'}
+    P.preview=true;REALME=ME;FULLDATA=S;S=redactAll(FULLDATA,P);ME=P}
+  UI.scout=null;if(!myViews().includes(UI.view))UI.view=myViews()[0]||'dashboard';render();
+  if(ME.preview)return`Anteprima come ${ME.ruoli.join(' · ')||ME.nome}: le modifiche sono disattivate`;
+  if(REMOTE&&SYNC.ready){SYNC.full=true;sync()}
+  return'Anteprima chiusa'}
+function pvBar(){if(!ME?.preview)return'';
+  return`<div class="pv-bar" role="status">${I.eye}<span>Stai vedendo l'app come <b>${esc(ME.ruoli.join(' · ')||ME.nome)}</b>${ME.sim?'':` <span class="meta">(${esc(ME.nome||ME.email)})</span>`}. Le modifiche sono disattivate${REMOTE?' e il salvataggio è in pausa':''}.</span><button type="button" class="btn sm" data-act="pvOpen">Cambia</button><button type="button" class="btn sm pri" data-act="pvExit">Esci dall'anteprima</button></div>`}
+function formPreview(){if(!canPreview())return;const D=FULLDATA||S,pv=UI.pv,P=pvPeople(D);
+  openDrawer('Vedi come',`<p class="hint" style="margin-top:0">Guarda l'app con i permessi di un ruolo o di una persona: vedi solo quello che vedrebbe, senza poter modificare nulla. Si torna amministratore con «Esci dall'anteprima».</p>
+  <fieldset><legend>Un ruolo</legend>${sel('pv_ruolo','Ruolo',pv.ruolo,PV_RUOLI)}
+  <div class="pv-tl">Squadre <span class="meta">(una o più)</span></div><div class="pv-teams">${D.teams.map(t=>`<label><input type="checkbox" name="pv_t" value="${t.id}" ${pv.teams.includes(t.id)?'checked':''}>${chip(t)}<span>${esc(t.nome)}</span></label>`).join('')}</div>
+  <p class="hint">Genitore: si prende un'atleta per ogni squadra scelta, come se fossero sue figlie.</p></fieldset>
+  <fieldset><legend>Oppure una persona</legend>${sel('pv_email','Persona','',[['','— nessuna: usa il ruolo sopra —'],...P])}
+  <p class="hint">Con una persona si vede esattamente quello che vede quella persona, con tutti i suoi ruoli.</p></fieldset>`,
+  {saveLabel:'Vedi come',onSave:fd=>{const email=fd.get('pv_email')||'',role=fd.get('pv_ruolo'),T=fd.getAll('pv_t');
+    if(REMOTE&&!FULLDATA&&(SYNC.busy||anyPending())){toast('Attendi il salvataggio delle modifiche, poi riprova');sync();return false}
+    if(email)return previewAs(email);
+    if(!T.length){toast('Scegli almeno una squadra');return false}
+    UI.pv={ruolo:role,teams:T};return previewAs(profileSim(role,T,D))}})}
+/* demo: menu rapido con le persone dei dati di esempio (resta per provare in fretta) */
+function previewSelect(){if(!canPreview())return'';const D=FULLDATA||S,o=[['','Amministratore (tutto)'],...pvPeople(D).slice(0,24)];
+  return`<label class="preview"><span>Vedi come</span><select id="previewAs">${o.map(([v,l])=>`<option value="${esc(v)}" ${v===(ME?.preview&&!ME.sim?ME.email:'')?'selected':''}>${esc(l)}</option>`).join('')}</select></label>`}
 function go(v){if(!myViews().includes(v))v=myViews()[0]||'dashboard';UI.view=v;UI.scout=null;if(!$('#drawer').hidden)closeDrawer();try{history.replaceState(null,'','#'+v)}catch(e){}render();window.scrollTo(0,0)}
 function render(){SYNC.needRender=false;renderNav();const sc=UI.scout&&scRec(UI.scout),v=sc?V.scout:V[UI.view]||V.dashboard;scWake(!!sc);
-  $('#main').innerHTML=(REMOTE?newSite():`<div class="demo"><i></i>Dati di esempio · prototipo</div>`)+(sc?'':`<div class="gbar">${searchBox('gq')}</div>`)+v.html();v.after?.()}
+  $('#main').innerHTML=(REMOTE?newSite():`<div class="demo"><i></i>Dati di esempio · prototipo</div>`)+pvBar()+(sc?'':`<div class="gbar">${searchBox('gq')}</div>`)+v.html();v.after?.()}
 /* intestazione della pagina: la spiegazione si chiude con «?» e resta chiusa (per pagina, su questo dispositivo) */
 const HELP_KEY='palleggio-aiuto-chiuso';
 const helpClosed=()=>{try{return JSON.parse(localStorage.getItem(HELP_KEY)||'{}')||{}}catch(e){return{}}};
@@ -4122,6 +4182,7 @@ function openMenu(){const cnt=navCounts(),s=syncInfo(),mv=myViews(),TABS=myTabs(
   openDrawer('Menu',`${whoHtml().replace('who-box','who-box menu-who')}${navGroups(VV).map(([g,L],i)=>`${g?`<h3 class="menu-h${i?'':' first'}">${g}</h3>`:''}<div class="menu">${L.map(([k,l,ic])=>`<button type="button" data-act="nav" data-id="${k}" class="${UI.view===k?'on':''}">${ic}<span>${l}</span>${cnt(k)}</button>`).join('')}</div>`).join('')}
   <h3 class="menu-h">Aspetto</h3>${temaHtml()}
   <h3 class="menu-h">Società e dati</h3>
+  ${canPreview()?`<div class="menu"><button type="button" data-act="pvOpen">${I.eye}<span>Vedi come…<small>Guarda l'app come un dirigente, un allenatore, un genitore…</small></span></button></div>`:''}
   <div class="menu"><button type="button" data-act="club">${I.club}<span>${esc(S.club.nome)}<small>Stagione ${esc(S.club.stagione)}</small></span><em>Modifica</em></button>
   ${REMOTE&&SYNC.url?`<a href="${esc(SYNC.url)}" target="_blank" rel="noopener">${I.sheet}<span>Apri il foglio Google</span></a>`:''}
   ${REMOTE?`<button type="button" data-act="reload">${I.sync}<span>Ricarica dati</span></button><button type="button" data-act="devices">${I.key}<span>Dispositivi collegati<small>Dove sei collegato e il link dell'app per altre persone</small></span></button><button type="button" data-act="logout">${I.out}<span>Esci</span></button>`:''}</div>
@@ -4319,6 +4380,8 @@ const ACT={
   calOpen:(el,id)=>formCal(id),calGet:(el,id)=>calFile(id),
   calNew:el=>{if(!el.classList.contains('confirm')){el.classList.add('confirm');el.textContent='Conferma: i link vecchi smettono di funzionare';return}calLink(true)},
   pToggle:(el,id)=>{const L=(UI.sv.shut||[]).filter(k=>k!==id);if(pOpen(id))L.push(id);UI.sv.shut=L;svSave();render()},
+  pvOpen:()=>formPreview(),
+  pvExit:()=>toast(previewAs('')),
   svToggle:()=>{UI.sv.open=!UI.sv.open;svSave();render()},
   svTeam:(el,id)=>{const T=UI.sv.teams.filter(x=>teamOf(x));if(!id)UI.sv.teams=[];else{const i=T.indexOf(id);if(i<0)T.push(id);else T.splice(i,1);UI.sv.teams=T}svSave();render()},
   /* dalla bacheca: pannello aperto, filtrato sulle proprie squadre ('mine') o su tutte */
@@ -4353,7 +4416,7 @@ const ACT={
   tpl:(el,id)=>{UI.com.msg=TPL[id];if(id==='visita'){UI.com.filtro='visita';UI.com.tipo='famiglie'}else if(id==='quota'){UI.com.filtro='quota';UI.com.tipo='famiglie'}else if(id==='sollecitoRata'){UI.com.filtro=quotaAny('late')?'late':'soon';UI.com.tipo='famiglie'}else if(id==='sostituto'){UI.com.filtro='sost';UI.com.tipo='staff'}else UI.com.filtro='';render()},
   more:()=>openMenu(),club:()=>formClub(),
   reset:el=>{if(!el.classList.contains('confirm')){el.classList.add('confirm');el.textContent='Conferma: cancella le modifiche';return}
-    FULLDATA=null;ME=adminProfile('');S=seed();save();UI.imp=null;closeDrawer();render();toast('Dati demo ripristinati')},
+    FULLDATA=null;REALME=null;ME=adminProfile('');S=seed();save();UI.imp=null;closeDrawer();render();toast('Dati demo ripristinati')},
   reload:()=>{if(SYNC.busy||pendingChanges().length){toast('Attendi il salvataggio delle modifiche, poi riprova');sync();return}closeDrawer();boot(true)},
   retry:()=>boot(),
   lgBack:()=>{LOGIN.step='email';loginScreen()},
@@ -4379,7 +4442,7 @@ document.addEventListener('input',e=>{const el=e.target;
   if('psheet' in el.dataset){UI.pi.sheet=el.value;piDetect();render()}
   if('pilink' in el.dataset){UI.pi.link=el.checked;render()}});
 document.addEventListener('input',e=>{const m=e.target.id.match(/^f_g_(dir|email|cell)_(\d+)$/);if(m)syncParentFields(m[2])});
-document.addEventListener('change',e=>{if(e.target.id==='previewAs')previewAs(e.target.value)});
+document.addEventListener('change',e=>{if(e.target.id==='previewAs')toast(previewAs(e.target.value),4000)});
 document.addEventListener('change',e=>{const i=e.target.dataset?.avlink;if(i==null||!UI.av)return;UI.av.link[i]=e.target.value;render()});
 document.addEventListener('change',e=>{const id=e.target.dataset?.rqsel;if(!id)return;UI.rq.sel=e.target.checked?[...new Set([...UI.rq.sel,id])]:UI.rq.sel.filter(x=>x!==id);render()});
 document.addEventListener('change',e=>{const i=e.target.dataset?.avtx;if(i==null||!UI.av)return;UI.av.tx[i]=e.target.value;render()});
