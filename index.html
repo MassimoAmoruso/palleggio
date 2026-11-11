@@ -3000,7 +3000,7 @@ function avPanelHtml(){const ed=canNew('avversari'),n=S.avversari.length;if(!ed&
 const txSame=(x,id)=>{const y=teamOf(id)?.tasse?.find(y=>norm(y.voce)===norm(x.voce));return!!y&&y.scadenza===x.scadenza&&y.totale===x.totale&&y.gare===x.gare};
 const spSame=id=>{const g=teamOf(id)?.spostGratis,s=UI.av?.spost;return!!g&&!!s&&g.max===s.max&&g.entro===s.entro};
 function avReviewHtml(){const P=UI.av,txN=(P.tasse||[]).filter((x,i)=>P.tx?.[i]&&!txSame(x,P.tx[i])).length,spN=P.spost?(P.spT||[]).filter(id=>!spSame(id)).length:0,R=avPreview(),go=R.filter(x=>x.st==='new'||x.st==='upd').length;
-  const can=go||R.some(x=>x.link)||txN||spN,foot=`<div class="actions"><button class="btn pri" type="button" data-act="avApply" ${can?'':'disabled'}>Salva dal comunicato</button><button class="btn" type="button" data-act="avCancel">Annulla</button></div>`;
+  const can=go||R.some(x=>x.link)||txN||spN,foot=`<div class="actions"><button class="btn pri" type="button" data-act="avApply" ${can?'':'disabled'}>Salva dal comunicato</button><button class="btn" type="button" data-act="avCancel">Annulla</button>${can?'':`<span class="hint" style="margin:0">Niente di nuovo da salvare: ${P.rows.length&&!(P.cats||[]).length?'spunta almeno un campionato':'recapiti, tasse e spostamenti gratuiti sono già registrati così'}.</span>`}</div>`;
   return(P.rows.length?avRecHtml(R):`<div class="summary"><span>${esc(P.name||'Testo incollato')}</span>${P.fonte?`<span><b>${esc(P.fonte)}</b></span>`:''}<span>nessun recapito</span></div>`)+avTxHtml()+foot+
   `<p class="hint">${(P.groups||[]).length>1?'I recapiti vengono salvati solo per i campionati spuntati. ':''}Le squadre già presenti vengono aggiornate con i dati del comunicato. Una squadra senza gare collegate può avere nel calendario un nome diverso: scegli a quale corrisponde e verrà ricordato.${P.tasse?.length?' Le tasse si salvano solo nelle squadre scelte: i pagamenti già segnati restano.':''}</p>`}
 /* tasse gara e spostamenti gratuiti letti dal comunicato */
@@ -4449,7 +4449,10 @@ const ACT={
   startDemo:()=>{S=seed();start();save();toast('Dati di esempio caricati sul foglio Google')},
 };
 document.addEventListener('click',e=>{if(e.target.closest?.('[data-gpick]'))setTimeout(searchClose,0)});
-document.addEventListener('click',e=>{if(e.target.closest('a'))return;const el=e.target.closest('[data-act]');if(!el)return;e.preventDefault();ACT[el.dataset.act]?.(el,el.dataset.id,e)});
+/* un comando che va in errore non resta muto: si vede il motivo (e lo si può riferire) */
+const actErr=(a,err)=>{console.error(err);toast(`Il comando non è riuscito (${a}): ${String(err?.message||err).slice(0,160)}`,10000)};
+document.addEventListener('click',e=>{if(e.target.closest('a'))return;const el=e.target.closest('[data-act]');if(!el)return;e.preventDefault();const a=el.dataset.act;
+  try{const r=ACT[a]?.(el,el.dataset.id,e);if(r&&typeof r.catch==='function')r.catch(err=>actErr(a,err))}catch(err){actErr(a,err)}});
 $('#scrim').addEventListener('click',closeDrawer);
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#drawer').hidden)closeDrawer()});
 document.addEventListener('input',e=>{const el=e.target;
