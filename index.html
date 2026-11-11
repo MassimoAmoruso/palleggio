@@ -1068,7 +1068,7 @@ function permCan(P, c, cur, next) {
     case 'matches':
       if (P.giov && both(function (m) { return inG(m.teamId); })) return true;
       if (P.segr && cur && next && P.segrTeams.indexOf(cur.teamId) >= 0 && P.segrTeams.indexOf(next.teamId) >= 0) return true; /* la segreteria modifica le gare delle sue squadre (e ne approva gli spostamenti), non le crea né le elimina */
-      if (cur && next && permSpApprove(P, cur) && P.workTeams.indexOf(cur.teamId) >= 0 && permSpEsito(cur, next)) return true; /* allenatore o dirigente che approva o rifiuta */
+      if (cur && next && permSpApprove(P, cur) && P.workTeams.indexOf(cur.teamId) >= 0 && (permSpEsito(cur, next) || permSpAnnulla(cur, next))) return true; /* allenatore o dirigente che approva o rifiuta (o annulla l'esito) */
       if (!next && cur && cur.origine !== 'manuale') return false; /* le gare FIPAV le elimina solo la segreteria */
       return both(function (m) { return M.indexOf(m.teamId) >= 0; }) && permSpOk(cur, next);
   }
@@ -1095,10 +1095,30 @@ function permSpApprove(P, m) {
 function permSpEsito(cur, next) {
   var a = cur.spostamento, b = next.spostamento;
   if (!a || a.stato !== 'richiesta' || !b || (b.stato !== 'approvata' && b.stato !== 'rifiutata')) return false;
-  if (!permOnly(a, b, ['stato', 'esito', 'esitoDa'])) return false;
-  if (b.stato === 'rifiutata') return permOnly(cur, next, ['spostamento']);
+  if (!permOnly(a, b, ['stato', 'esito', 'esitoDa', 'prima'])) return false;
+  if (b.stato === 'rifiutata') return b.prima === undefined && permOnly(cur, next, ['spostamento']);
   if (!a.al || next.data !== a.al.data || next.ora !== a.al.ora) return false;
+  /* com'era la gara, per poter annullare l'approvazione: deve essere proprio lo stato di prima */
+  if (b.prima !== undefined && JSON.stringify(b.prima) !== JSON.stringify(permSpPrima(cur))) return false;
   return permOnly(cur, next, ['spostamento', 'data', 'ora', 'impianto', 'gymId', 'lock']);
+}
+/* data, ora, palestra e campi protetti della gara prima dell'approvazione (spostamento.prima) */
+function permSpPrima(m) {
+  var v = function (x) { return x === undefined ? null : x; };
+  return { data: v(m.data), ora: v(m.ora), impianto: v(m.impianto), gymId: v(m.gymId), lock: v(m.lock) };
+}
+/* esito registrato per errore: la richiesta torna in attesa e, se era approvata, la gara torna esattamente com'era (prima).
+   Vale per chi approva; chi gestisce il calendario può comunque correggere la gara a mano */
+function permSpAnnulla(cur, next) {
+  var a = cur.spostamento, b = next.spostamento;
+  if (!a || (a.stato !== 'approvata' && a.stato !== 'rifiutata') || !b || b.stato !== 'richiesta') return false;
+  if (b.esito !== undefined || b.esitoDa !== undefined || b.prima !== undefined) return false;
+  if (!permOnly(a, b, ['stato', 'esito', 'esitoDa', 'prima'])) return false;
+  if (a.stato === 'rifiutata') return permOnly(cur, next, ['spostamento']);
+  /* approvata: la gara è ancora all'orario approvato e torna a quello salvato al momento dell'approvazione */
+  if (!a.prima || !a.al || cur.data !== a.al.data || cur.ora !== a.al.ora) return false;
+  if (!permOnly(cur, next, ['spostamento', 'data', 'ora', 'impianto', 'gymId', 'lock'])) return false;
+  return JSON.stringify(permSpPrima(next)) === JSON.stringify(a.prima);
 }
 /* regole per allenatori e dirigenti (chi approva non passa di qui).
    match.spostamento è la richiesta più recente; quelle chiuse (approvate o rifiutate) restano in match.spostStorico
@@ -3632,8 +3652,10 @@ function spView(m){const sp=m.spostamento;if(!sp){formSposta(m);return}const txt
   <div class="actions" style="margin-top:8px"><button type="button" class="btn" data-act="copy" data-text="${esc(txt)}">${I.copy}Copia testo</button><a class="btn" href="mailto:${esc(mail)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}" target="_blank" rel="noopener">${I.mail}Email${mail?'':' (scegli il destinatario)'}</a><a class="btn" href="https://wa.me/?text=${encodeURIComponent(txt)}" target="_blank" rel="noopener">${I.wa}WhatsApp</a>${av?.dir?.cell?`<a class="btn" href="${esc(waUrl(av.dir.cell,txt))}" target="_blank" rel="noopener">${I.wa}WhatsApp a ${esc(av.dir.nome||av.nome)}</a>`:''}</div>
   ${av?`<p class="hint">Società avversaria: ${esc(av.nome)}${av.dir?.nome?', dirigente responsabile '+esc(av.dir.nome):''}${av.dir?.email?' (l\'email è già tra i destinatari)':av.dir?.cell?' (solo cellulare nel comunicato)':''}.</p>`:canNew('avversari')?'<p class="hint">Per avere tra i destinatari anche la società avversaria, carica il comunicato FIPAV con i recapiti delle formazioni dalla pagina Partite.</p>':''}
   ${S.club.emailFipav?'':'<p class="hint">Suggerimento: l\'email del comitato FIPAV si imposta una volta sola nei dati della società (in alto a sinistra) e verrà proposta come destinatario.</p>'}
-  ${ap?`<h3 style="margin:18px 0 6px">Approvazione</h3><div class="actions">${sp.stato!=='approvata'?`<button type="button" class="btn pri" data-act="spApprove" data-id="${m.id}">Approva e sposta la gara</button>`:''}${pend?`<button type="button" class="btn" data-act="spReject" data-id="${m.id}">Rifiuta</button><button type="button" class="btn" data-act="spEdit" data-id="${m.id}">Modifica</button>`:`<button type="button" class="btn" data-act="spNew" data-id="${m.id}">Nuova richiesta</button>`}${canSpFull(m)?`<button type="button" class="btn danger" data-act="spCancel" data-id="${m.id}">Elimina richiesta</button>`:pend?`<button type="button" class="btn danger" data-act="spCancel" data-id="${m.id}">Ritira richiesta</button>`:''}</div>
-  <p class="hint">Approva quando lo spostamento è confermato (comitato e società avversaria): data, ora e palestra della gara diventano quelle richieste e non vengono sovrascritte dai prossimi import FIPAV.</p>`
+  ${ap?`<h3 style="margin:18px 0 6px">Approvazione</h3><div class="actions">${sp.stato!=='approvata'?`<button type="button" class="btn pri" data-act="spApprove" data-id="${m.id}">Approva e sposta la gara</button>`:''}${pend?`<button type="button" class="btn" data-act="spReject" data-id="${m.id}">Rifiuta</button><button type="button" class="btn" data-act="spEdit" data-id="${m.id}">Modifica</button>`:`${canSpUndo(m)?`<button type="button" class="btn" data-act="spUndo" data-id="${m.id}">${sp.stato==='approvata'?'Annulla approvazione':'Annulla rifiuto'}</button>`:''}<button type="button" class="btn" data-act="spNew" data-id="${m.id}">Nuova richiesta</button>`}${canSpFull(m)?`<button type="button" class="btn danger" data-act="spCancel" data-id="${m.id}">Elimina richiesta</button>`:pend?`<button type="button" class="btn danger" data-act="spCancel" data-id="${m.id}">Ritira richiesta</button>`:''}</div>
+  <p class="hint">${pend?'Approva quando lo spostamento è confermato (comitato e società avversaria): data, ora e palestra della gara diventano quelle richieste e non vengono sovrascritte dai prossimi import FIPAV.'
+    :canSpUndo(m)?`Esito registrato per errore? «${sp.stato==='approvata'?'Annulla approvazione':'Annulla rifiuto'}» rimette la richiesta in attesa${sp.stato==='approvata'?` e riporta la gara a ${sp.prima?`${fmtDow(sp.prima.data)} ore ${esc(sp.prima.ora)}`:`${fmtDow(sp.dal.data)} ore ${esc(sp.dal.ora)}`}, nella palestra di prima`:''}.`
+    :sp.stato==='approvata'?'La gara è stata modificata dopo l\'approvazione: per annullarla chiedi alla segreteria.':'Approva quando lo spostamento è confermato (comitato e società avversaria).'}</p>`
   :w&&pend?`<h3 style="margin:18px 0 6px">La tua richiesta</h3><div class="actions"><button type="button" class="btn" data-act="spEdit" data-id="${m.id}">Modifica</button><button type="button" class="btn danger" data-act="spCancel" data-id="${m.id}">Ritira richiesta</button></div>
   <p class="hint">Possono approvarla ${esc(approvers(m))}.</p>`
   :w?`<h3 style="margin:18px 0 6px">Nuova richiesta</h3><div class="actions"><button type="button" class="btn" data-act="spNew" data-id="${m.id}">Richiedi un altro spostamento</button></div>
@@ -3643,12 +3665,28 @@ function spView(m){const sp=m.spostamento;if(!sp){formSposta(m);return}const txt
 /* chi approva, per il messaggio a chi chiede */
 function approvers(m){const L=segretari(m?.teamId);return[L.length?`la segreteria (${segNames(L)})`:'la segreteria','gli allenatori e i dirigenti della squadra','il responsabile del settore giovanile','gli amministratori'].join(', ').replace(/, ([^,]*)$/,' o $1')}
 function spApply(m,stato){const sp=m.spostamento;if(!sp||!canApprove(m))return;
-  if(stato==='approvata'){const g=S.gyms.find(x=>norm(x.nome)===norm(sp.al.palestra)||(x.fipav&&norm(x.fipav)===norm(sp.al.palestra)));
+  if(stato==='approvata'){sp.prima=permSpPrima(m);if(sp.prima.lock)sp.prima.lock=[...sp.prima.lock];const g=S.gyms.find(x=>norm(x.nome)===norm(sp.al.palestra)||(x.fipav&&norm(x.fipav)===norm(sp.al.palestra)));
     const ch=['data','ora'];m.data=sp.al.data;m.ora=sp.al.ora;
     if(sp.al.palestra&&norm(sp.al.palestra)!==norm(sp.dal.palestra)){if(g){m.gymId=g.id;m.impianto=g.fipav||g.nome}else{m.gymId='';m.impianto=sp.al.palestra}ch.push('impianto')}
     m.lock=[...new Set([...(m.lock||[]),...ch])];S.matches.sort(byWhen)}
   sp.stato=stato;sp.esito=TODAY_ISO;sp.esitoDa=ME?.nome||ME?.email||'';save();closeDrawer();render();
   toast(stato==='approvata'?`Gara spostata a ${fmtDow(m.data)} ore ${m.ora}`:'Esito registrato: richiesta rifiutata',4000)}
+/* esito dato per errore: la richiesta torna in attesa; se era approvata la gara torna com'era (spostamento.prima).
+   Chi approva soltanto (allenatori, dirigenti) lo può fare se la gara è ancora all'orario approvato e lo stato di prima è noto;
+   chi gestisce il calendario sempre: per le approvazioni registrate prima di questa versione si torna a «dal» */
+const canSpUndo=m=>{const sp=m?.spostamento;if(!sp||spPending(m)||!['approvata','rifiutata'].includes(sp.stato)||!canApprove(m))return false;
+  return canSpFull(m)||sp.stato==='rifiutata'||(!!sp.prima&&m.data===sp.al?.data&&m.ora===sp.al?.ora)};
+function spUndo(m){const sp=m?.spostamento;if(!canSpUndo(m))return;const was=sp.stato;
+  if(was==='approvata'){const p=sp.prima;
+    if(p){m.data=p.data;m.ora=p.ora;['impianto','gymId','lock'].forEach(k=>{if(p[k]==null)delete m[k];else m[k]=Array.isArray(p[k])?[...p[k]]:p[k]})}
+    else{m.data=sp.dal.data;m.ora=sp.dal.ora;
+      if(sp.al.palestra&&norm(sp.al.palestra)!==norm(sp.dal.palestra)){const g=S.gyms.find(x=>norm(x.nome)===norm(sp.dal.palestra)||(x.fipav&&norm(x.fipav)===norm(sp.dal.palestra)));
+        if(g){m.gymId=g.id;m.impianto=g.fipav||g.nome}else{m.gymId='';m.impianto=sp.dal.palestra||''}}
+      /* i campi restano protetti solo se un'altra richiesta approvata li aveva già spostati */
+      if(!(m.spostStorico||[]).some(x=>x.stato==='approvata')){m.lock=(m.lock||[]).filter(k=>!['data','ora','impianto'].includes(k));if(!m.lock.length)delete m.lock}}
+    S.matches.sort(byWhen)}
+  sp.stato='richiesta';delete sp.esito;delete sp.esitoDa;delete sp.prima;save();closeDrawer();render();
+  toast(was==='approvata'?`Approvazione annullata: la gara torna a ${fmtDow(m.data)} ore ${m.ora} e la richiesta è di nuovo in attesa`:'Rifiuto annullato: la richiesta è di nuovo in attesa',5000)}
 /* ---------- scout della gara ----------
    scout = {id, matchId, teamId, roster:[idAtleta], liberi:[idAtleta], modulo:'5-1'|'4-2', palleggiatori:[idAtleta],
             sets:[{start:[6 id, zona 1→6], serve, ev:[…]}], fine, at}
@@ -4382,6 +4420,8 @@ const ACT={
   ignConf:(el,id)=>{const[x,y]=id.split('~').map(recById);if(x&&y)formIgnora(x,y)},
   unignConf:(el,id)=>{const[x,y]=id.split('~').map(recById);if(x&&y)unignore(x,y)},
   spNew:(el,id)=>{const L=matchesOf(id);if(L.length)formSposta(L[0],L)},spEdit:(el,id)=>formSposta(S.matches.find(m=>m.id===id)),spView:(el,id)=>spView(S.matches.find(m=>m.id===id)),
+  spUndo:(el,id)=>{const m=S.matches.find(x=>x.id===id);if(!canSpUndo(m))return;
+    if(!el.classList.contains('confirm')){el.classList.add('confirm');el.textContent=m.spostamento.stato==='approvata'?`Conferma: la gara torna a ${fmtDow((m.spostamento.prima||m.spostamento.dal).data)} ${(m.spostamento.prima||m.spostamento.dal).ora}`:'Conferma: richiesta di nuovo in attesa';return}spUndo(m)},
   spApprove:(el,id)=>spApply(S.matches.find(m=>m.id===id),'approvata'),spReject:(el,id)=>spApply(S.matches.find(m=>m.id===id),'rifiutata'),
   spCancel:(el,id)=>{const m=S.matches.find(x=>x.id===id);if(!m)return;closeDrawer();withUndo(()=>{delete m.spostamento;return'Richiesta eliminata'});render()},
   newMatch:()=>formMatch(),editMatch:(el,id)=>formMatch(S.matches.find(m=>m.id===id)),
