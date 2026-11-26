@@ -3743,6 +3743,8 @@ const scMir=(a,b)=>!!a&&(SC_MIR.has(a+'|'+b)||SC_MIR.has(b+'|'+a));
 /* rilettura di un set: punteggio, battuta, rotazione, statistiche per rotazione */
 function scReplay(st,i,r){let us=0,them=0,serve=!!st.serve,rot=0,fresh=true,last='',lastT='',lastId='',q='T',close=null,run=0,lib=st.lib||r?.liberi?.[0]||null;const to=[0,0];
   const line=[...st.start],so={},bp={},rf={},dist={},rows=[],seq=[],pt={att:0,muro:0,ace:0,avv:0,err:0,loro:0};
+  /* cambio palla secondo la prima ricezione dello scambio (sob buona # +, sos scarsa ! - /) e scambi con il libero in campo */
+  const sob={},sos={},lr={};let rq='';
   const P0=(r?.palleggiatori||[]).map(id=>st.start.indexOf(id)).find(k=>k>=0);
   const pos=()=>P0==null?null:((P0-rot)%6+6)%6,P=()=>P0==null?(rot%6+6)%6+1:pos()+1;
   for(const e of st.ev){let p=0;
@@ -3759,25 +3761,41 @@ function scReplay(st,i,r){let us=0,them=0,serve=!!st.serve,rot=0,fresh=true,last
       if(T==='us'){const R=rf[k]=rf[k]||{},c=R[f]=R[f]||{n:0};c.n++;c[v]=(c[v]||0)+1;
         /* distribuzione: a chi va l'attacco, per rotazione e qualità dell'azione che lo precede */
         if(f==='A'){const D=((dist[k]=dist[k]||{})[q]=dist[k][q]||{}),a=D[id]=D[id]||{n:0};a.n++;a[v]=(a[v]||0)+1}
-        if(f==='R')q='#+'.includes(v)?'Rb':'Rs';else if('DMB'.includes(f))q='T'}
+        if(f==='R'){q='#+'.includes(v)?'Rb':'Rs';if(!rq)rq=v==='='?'x':'#+'.includes(v)?'b':'s'}else if('DMB'.includes(f))q='T'}
       else if(f==='A')q='T';
-      const pp=T==='us'?scPoint(f,v):-scPoint(f,v);rows.push({set:i+1,us,them,rot:k,id,f,v,from:d.from,to:d.to,p:mir?0:pp,team:T,mir});
+      const pp=T==='us'?scPoint(f,v):-scPoint(f,v);rows.push({set:i+1,us,them,rot:k,id,f,v,from:d.from,to:d.to,p:mir?0:pp,team:T,mir,ro:T==='us'?scPlayed(r,line,id):''});
       if(mir)continue;p=pp;
       if(T==='us'){if(p>0)pt[f==='A'?'att':f==='M'?'muro':'ace']++;else if(p<0)pt.err++}else if(p>0)pt.avv++;else if(p<0)pt.loro++;
       if(!p){fresh=false;last=f;lastT=T;lastId=id;continue}
       close=key}
     const box=serve?bp:so,k=P();box[k]=box[k]||[0,0];box[k][1]++;if(p>0)box[k][0]++;
+    if(!serve&&(rq==='b'||rq==='s')){const B=rq==='b'?sob:sos;B[k]=B[k]||[0,0];B[k][1]++;if(p>0)B[k][0]++}
+    if(r?.libC&&lib){lr[k]=lr[k]||[0,0];lr[k][1]++;if(scField(r,line,serve,lib).includes(lib))lr[k][0]++}rq='';
     if(p>0){us++;if(!serve){serve=true;rot++;line.push(line.shift())}}else{them++;serve=false}
     run=p>0?Math.max(run,0)+1:Math.min(run,0)-1;seq.push([us,them]);
     fresh=true;last='';lastT='';lastId='';q='T'}
   const t=scTarget(i),over=(us>=t||them>=t)&&Math.abs(us-them)>=2;
-  return{us,them,serve,rot:P(),line,field:scField(r,line,serve,lib),lib,seq,so,bp,rf,dist,rows,pt,fresh,last,lastT,lastId,over,to,run,setter:pos()==null?null:line[pos()]}}
+  return{us,them,serve,rot:P(),line,field:scField(r,line,serve,lib),lib,seq,so,bp,sob,sos,lr,rf,dist,rows,pt,fresh,last,lastT,lastId,over,to,run,setter:pos()==null?null:line[pos()]}}
 /* libero al posto del centrale in seconda linea (r.libC): il centrale batte in zona 1, il libero entra quando perdiamo
    la battuta, resta in zona 6 e 5 ed esce quando quel posto torna in prima linea (zona 4); poi lo stesso con l'altro centrale.
    Non è un cambio: si ricava dalla rotazione (line resta con i sei titolari, field è chi è davvero in campo) */
 const scCentr=id=>/centr/i.test(scAth(id)?.ruolo||'');
+/* chi fa davvero il centrale: i due centrali stanno sempre in diagonale (zone 1-4, 2-5, 3-6). Un'atleta con ruolo
+   «Centrale» conta solo se in diagonale c'è l'altro centrale (o un'atleta senza ruolo, es. entrata per cambio) e non un
+   palleggiatore: in diagonale al palleggiatore gioca da opposto (5-1) e il libero non la sostituisce. Le posizioni sono
+   relative, quindi la scelta non cambia con la rotazione; dipende solo dal sestetto (e dai cambi) */
+function scMid(r,line){const pal=r?.palleggiatori||[];
+  return line.map((id,k)=>{const d=line[(k+3)%6];
+    return scCentr(id)&&!pal.includes(d)&&(scCentr(d)||!scAth(d)?.ruolo)})}
+/* ruolo giocato in un'azione, dalla posizione nel sestetto: P palleggiatore, O in diagonale al palleggiatore, C centrale vera,
+   L libero; le altre secondo la scheda (una centrale che non è in coppia con l'altra gioca da banda) */
+function scPlayed(r,line,id){const pal=r?.palleggiatori||[],k=line.indexOf(id),s=scRuolo(id)?.s||'';
+  if(k<0)return(r?.liberi||[]).includes(id)?'L':s||'S';
+  if(pal.includes(id))return'P';if(pal.includes(line[(k+3)%6]))return'O';if(scMid(r,line)[k])return'C';
+  return s==='C'?'S':s||'S'}
+const SC_RG=[['P','Palleggio','palleggio'],['O','Opposto','opposto'],['C','Centrali','centrale'],['S','Bande','banda'],['L','Libero','libero']];
 function scField(r,line,serve,active=r?.liberi?.[0]){const lib=r?.libC&&active;if(!lib||line.includes(lib))return line;
-  const k=line.findIndex((id,k)=>scCentr(id)&&(k===4||k===5||(k===0&&!serve)));
+  const mid=scMid(r,line),k=line.findIndex((id,k)=>mid[k]&&(k===4||k===5||(k===0&&!serve)));
   if(k<0)return line;const f=[...line];f[k]=lib;return f}
 function scSets(r){return r.sets.map((st,i)=>scReplay(st,i,r))}
 /* azione successiva più probabile: dopo la battuta muro o difesa, dopo la ricezione l'alzata (in rapida l'attacco)… */
@@ -3850,7 +3868,7 @@ function formScoutSetup(m){const L=scRosterOf(m),t=teamOf(m.teamId),tmp={teamId:
   <fieldset><legend>Sestetto del primo set</legend>${scLineup(tmp,null)}<p class="hint">Disposizione come in campo: in alto la rete (zone 4, 3, 2), in basso la seconda linea. In zona 1 chi batte.</p></fieldset>
   <fieldset><legend>Libero</legend><div class="fgrid">${sel('l1','Libero',lib?.id||'',scOpt(tmp,tmp.roster))}${sel('l2','Secondo libero','',scOpt(tmp,tmp.roster))}</div>
   <label class="check"><input type="checkbox" name="libC" checked> Il libero entra al posto dei centrali in seconda linea</label>
-  <p class="hint">Il centrale batte; quando perdiamo la battuta entra il libero, che esce quando il centrale torna in prima linea. Poi lo stesso con l'altro centrale. Serve il ruolo «Centrale» nella scheda dell'atleta.</p></fieldset>
+  <p class="hint">Il centrale batte; quando perdiamo la battuta entra il libero, che esce quando il centrale torna in prima linea. Poi lo stesso con l'altro centrale. Serve il ruolo «Centrale» nella scheda dell'atleta. Contano solo i due centrali in diagonale tra loro (zone 1-4, 2-5, 3-6): una centrale schierata in diagonale al palleggiatore gioca da opposto e resta in campo.</p></fieldset>
   <fieldset><legend>Avversari</legend><label class="check"><input type="checkbox" name="avv"> Scout anche gli avversari</label>
   <label class="field"><span>Numeri di maglia avversari (facoltativo, si aggiungono anche durante la gara)</span><input id="f_avvn" name="avvn" placeholder="es. 1, 4, 7, 9, 12, 15"></label>
   <p class="hint">Per gli avversari si registrano battuta, ricezione e attacco. Raddoppia il lavoro di chi fa lo scout: attivalo solo se serve.</p></fieldset>
@@ -4112,8 +4130,8 @@ function scOppHtml(r,sets){const rows=sets.flatMap(x=>x.rows).filter(e=>e.team==
 /* esportazione in Excel: un foglio con tutte le azioni, uno con le statistiche per atleta */
 async function scExport(r){if(!r)return;try{await loadXlsx()}catch(e){toast(e.message);return}
   const m=S.matches.find(x=>x.id===r.matchId),FL=Object.fromEntries(SC_F),sets=scSets(r),P=scStats(r);
-  const az=[['Set','Noi','Loro','Rotazione','Squadra','N.','Atleta','Fondamentale','Valutazione','Significato','Da zona','A zona','Punto']];
-  sets.forEach(x=>x.rows.forEach(e=>az.push([e.set,e.us,e.them,'P'+e.rot,e.team==='them'?'avversari':'noi',scNum(r,e.id),scIsO(e.id)?'':fullName(scAth(e.id)),FL[e.f]||e.f,e.v,scVL(e.f,e.v)[0],e.from||'',e.to||'',e.p>0?'noi':e.p<0?'loro':''])));
+  const az=[['Set','Noi','Loro','Rotazione','Squadra','N.','Atleta','Ruolo in campo','Fondamentale','Valutazione','Significato','Da zona','A zona','Punto']];
+  sets.forEach(x=>x.rows.forEach(e=>az.push([e.set,e.us,e.them,'P'+e.rot,e.team==='them'?'avversari':'noi',scNum(r,e.id),scIsO(e.id)?'':fullName(scAth(e.id)),SC_RG.find(([k])=>k===e.ro)?.[2]||'',FL[e.f]||e.f,e.v,scVL(e.f,e.v)[0],e.from||'',e.to||'',e.p>0?'noi':e.p<0?'loro':''])));
   const at=[['N.','Atleta','Battute','Ace','Err. battuta','Eff. battuta','Ricezioni','Ric. positiva','Ric. perfetta','Err. ricezione','Attacchi','Punti attacco','Err. attacco','Eff. attacco','Muri punto','Difese','Errori totali']];
   r.roster.filter(id=>P[id]).forEach(id=>{const a=P[id];at.push([scNum(r,id),fullName(scAth(id)),a.B?.n||0,scC(a.B,'#'),scErrs(a.B,'B'),scEff(a.B,'B'),a.R?.n||0,scPos(a.R),scPct(scC(a.R,'#'),a.R?.n),scErrs(a.R,'R'),a.A?.n||0,scC(a.A,'#'),scErrs(a.A,'A'),scEff(a.A,'A'),scC(a.M,'#'),a.D?.n||0,SC_F.reduce((s,[f])=>s+scErrs(a[f],f),0)])});
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(az),'Azioni');XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(at),'Atlete');
@@ -4133,6 +4151,37 @@ function scErrHtml(r,ER){if(!ER.n)return`<h3 style="margin:14px 0 6px">Errori</h
   ${scHBars(SC_F.filter(([f])=>ER.tot[f]).map(([f,l])=>({l,v:ER.tot[f],t:`${l}: ${ER.tot[f]} errori${f==='A'&&ER.mur?`, di cui ${ER.mur} murati`:''}`})).sort((a,b)=>b.v-a.v),'be')}
   <div class="sc-tw"><table class="sc-tab"><thead><tr><th>Atleta</th>${SC_F.map(([f,l])=>`<th title="${l}">${SH[f]}</th>`).join('')}<th>Tot</th></tr></thead>
   <tbody>${ER.who.map(([id,e,k])=>`<tr class="${k===top?'sc-errtop':''}"><td><b class="num">${esc(scNum(r,id))}</b> ${esc(scName(id))}</td>${SC_F.map(([f])=>scErrTd(e[f])).join('')}${scErrTd(k,true)}</tr>`).join('')}</tbody></table></div></div>`}
+/* ruoli giocati: statistiche per ruolo in campo (dalla posizione, non dalla scheda) e chi ha giocato fuori ruolo */
+function scRoles(sets){const R={},who={};sets.flatMap(x=>x.rows).filter(e=>e.team==='us'&&e.ro).forEach(e=>{
+  const a=R[e.ro]=R[e.ro]||{},c=a[e.f]=a[e.f]||{n:0};c.n++;c[e.v]=(c[e.v]||0)+1;const w=(who[e.ro]=who[e.ro]||{});w[e.id]=(w[e.id]||0)+1});return{R,who}}
+function scRoleHtml(r,RL,row){const G=SC_RG.filter(([k])=>RL.R[k]);if(!G.length)return'';
+  const fuori=[];G.forEach(([k,,l])=>Object.entries(RL.who[k]).forEach(([id,n])=>{const s=scRuolo(id);if(s?.s&&s.s!==k&&!(k==='P'&&s.s==='P'))fuori.push(`${esc(scName(id))} (${esc(s.l.replace('Schiacciatore/banda','banda').toLowerCase())}) da ${l} in ${n} azion${n===1?'e':'i'}`)}));
+  const att=G.filter(([k])=>RL.R[k].A?.n);
+  return`<h3 style="margin:14px 0 6px">Ruoli in campo</h3>${att.length?`<div class="summary">${att.map(([k,l])=>`<span>Attacco ${l.toLowerCase()} <b class="num">${scEff(RL.R[k].A,'A')}</b> <span class="meta">${RL.R[k].A.n} colpi</span></span>`).join('')}</div>`:''}
+  <div class="sc-tw"><table class="sc-tab"><thead><tr><th rowspan="2">Ruolo</th><th colspan="4">Battuta</th><th colspan="4">Ricezione</th><th colspan="4">Attacco</th><th>Muro</th><th>Dif.</th><th rowspan="2">Err<br>tot</th></tr>
+  <tr><th>Tot</th><th>Ace</th><th>Err</th><th>Eff</th><th>Tot</th><th>Pos</th><th>Perf</th><th>Err</th><th>Tot</th><th>Pti</th><th>Err</th><th>Eff</th><th>Pti</th><th>Tot</th></tr></thead>
+  <tbody>${G.map(([k,l])=>row(l,RL.R[k],'')).join('')}</tbody></table></div>
+  <p class="hint">${G.map(([k,l])=>`${l}: ${Object.keys(RL.who[k]).map(id=>esc(scName(id))).join(', ')}`).join(' · ')}. Il ruolo si ricava dalla posizione in campo: in diagonale al palleggiatore gioca l'opposto, i centrali sono la coppia in diagonale tra loro.</p>
+  ${fuori.length?`<p class="hint">Fuori dal ruolo della scheda: ${fuori.join(' · ')}.</p>`:''}`}
+/* libero: quanta ricezione e difesa prende, rispetto alle bande, e per quanti scambi è in campo */
+function scLibHtml(r,sets,RL,P){const L=RL.who.L;if(!L)return'';
+  const T={R:{n:0},D:{n:0}};Object.values(RL.R).forEach(a=>['R','D'].forEach(f=>{if(a[f])Object.entries(a[f]).forEach(([k,v])=>T[f][k]=(T[f][k]||0)+v)}));
+  const lr=scSum(sets.map(x=>x.lr)),ln=Object.values(lr).reduce((s,x)=>[s[0]+x[0],s[1]+x[1]],[0,0]);
+  const ids=Object.keys(L),one=id=>{const a={};sets.flatMap(x=>x.rows).filter(e=>e.id===id&&e.ro==='L').forEach(e=>{const c=a[e.f]=a[e.f]||{n:0};c.n++;c[e.v]=(c[e.v]||0)+1});return a};
+  const tr=(lab,a,share)=>`<tr><td>${lab}</td><td class="num">${a.R?.n||0}</td><td class="num">${share?scPct(a.R?.n||0,T.R.n):''}</td><td class="num">${scPos(a.R)}</td><td class="num">${scPct(scC(a.R,'#'),a.R?.n)}</td><td class="num">${a.D?.n||0}</td><td class="num">${share?scPct(a.D?.n||0,T.D.n):''}</td><td class="num">${scPos(a.D)}</td></tr>`;
+  return`<h3 style="margin:14px 0 6px">Libero</h3><div class="summary"><span>Ricezioni del libero <b class="num">${scPct(RL.R.L.R?.n||0,T.R.n)}</b> <span class="meta">${RL.R.L.R?.n||0} su ${T.R.n}</span></span><span>Difese del libero <b class="num">${scPct(RL.R.L.D?.n||0,T.D.n)}</b> <span class="meta">${RL.R.L.D?.n||0} su ${T.D.n}</span></span>${ln[1]?`<span>In campo <b class="num">${scPct(ln[0],ln[1])}</b> <span class="meta">degli scambi</span></span>`:''}</div>
+  <div class="sc-tw"><table class="sc-tab"><thead><tr><th rowspan="2"></th><th colspan="4">Ricezione</th><th colspan="3">Difesa</th></tr><tr><th>Tot</th><th>% squadra</th><th>Pos</th><th>Perf</th><th>Tot</th><th>% squadra</th><th>Pos</th></tr></thead>
+  <tbody>${ids.map(id=>tr(`<b class="num">${esc(scNum(r,id))}</b> ${esc(scName(id))}`,one(id),true)).join('')}${RL.R.S?tr('Bande',RL.R.S,true):''}</tbody><tfoot>${tr('Squadra',T,false)}</tfoot></table></div>
+  ${ln[1]?`<p class="hint">Libero in campo per rotazione: ${[1,6,5,4,3,2].filter(k=>lr[k]).map(k=>`<b>P${k}</b> ${scPct(lr[k][0],lr[k][1])}`).join(' · ')}. Positività in difesa = difese perfette o buone.</p>`:'<p class="hint">Positività in difesa = difese perfette o buone. Con «Libero sui centrali» si vede anche per quanti scambi è in campo.</p>'}`}
+/* cambio palla secondo la prima ricezione dello scambio: dice se una rotazione soffre per la ricezione o per l'attacco */
+function scSoRec(sets){const b=scSum(sets.map(x=>x.sob)),s=scSum(sets.map(x=>x.sos)),t=o=>Object.values(o).reduce((a,x)=>[a[0]+x[0],a[1]+x[1]],[0,0]);return{b,s,tb:t(b),ts:t(s)}}
+function scSoRecHtml(SR){if(!SR.tb[1]&&!SR.ts[1])return'';const pc=x=>x?.[1]?`${scPct(x[0],x[1])} <span class="meta">${x[0]}/${x[1]}</span>`:'—';
+  const gap=k=>SR.b[k]?.[1]&&SR.s[k]?.[1]?Math.round(SR.b[k][0]/SR.b[k][1]*100)-Math.round(SR.s[k][0]/SR.s[k][1]*100):null;
+  const low=[1,6,5,4,3,2].filter(k=>SR.b[k]?.[1]>=3).sort((a,c)=>SR.b[a][0]/SR.b[a][1]-SR.b[c][0]/SR.b[c][1])[0];
+  return`<h3 style="margin:14px 0 6px">Cambio palla secondo la ricezione</h3><div class="summary"><span>Ricezione buona (# +) <b class="num">${scPct(SR.tb[0],SR.tb[1])}</b> <span class="meta">${SR.tb[0]}/${SR.tb[1]}</span></span><span>Ricezione scarsa (! − /) <b class="num">${scPct(SR.ts[0],SR.ts[1])}</b> <span class="meta">${SR.ts[0]}/${SR.ts[1]}</span></span></div>
+  <div class="sc-tw"><table class="sc-tab"><thead><tr><th>Rotazione</th><th>Ricezione buona</th><th>Ricezione scarsa</th><th>Differenza</th></tr></thead>
+  <tbody>${[1,6,5,4,3,2].map(k=>`<tr class="${k===low?'sc-errtop':''}"><td><b>P${k}</b></td><td class="num">${pc(SR.b[k])}</td><td class="num">${pc(SR.s[k])}</td><td class="num">${gap(k)==null?'—':(gap(k)>0?'+':'')+gap(k)}</td></tr>`).join('')}</tbody></table></div>
+  <p class="hint">Punti vinti in ricezione secondo la qualità della prima ricezione (gli ace subìti sono a parte). Se anche con ricezione buona il cambio palla è basso, il problema è l'attacco${low?`: in evidenza la rotazione più debole con ricezione buona (P${low})`:''}.</p>`}
 /* report in PDF anche dal telefono: la stampa del browser non funziona nelle app sulla schermata Home e non dà un file da
    condividere. Si fotografa il report (html2canvas) in tema chiaro e largo come un foglio, lo si impagina in A4 (jsPDF) e
    lo si passa alla condivisione del telefono (WhatsApp, Mail, File); dove non c'è, si scarica. Librerie da cdnjs, solo qui.
@@ -4184,12 +4233,18 @@ function scReport(r,keep){if(!r)return;const sc=keep?$('#dBody').scrollTop:0;con
   const rf={};sets.forEach(x=>Object.entries(x.rf).forEach(([k,R])=>{const D=rf[k]=rf[k]||{};Object.entries(R).forEach(([f,c])=>{const T=D[f]=D[f]||{n:0};Object.entries(c).forEach(([kk,v])=>T[kk]=(T[kk]||0)+v)})}));
   const fatti=pt.att+pt.muro+pt.ace+pt.avv,persi=pt.err+pt.loro;
   const row=(lab,a,num)=>`<tr><td><b class="num">${esc(num||'')}</b> ${esc(lab)}</td><td class="num">${a.B?.n||0}</td><td class="num">${scC(a.B,'#')}</td>${scErrTd(scErrs(a.B,'B'))}<td class="num">${scEff(a.B,'B')}</td><td class="num">${a.R?.n||0}</td><td class="num">${scPos(a.R)}</td><td class="num">${scPct(scC(a.R,'#'),a.R?.n)}</td>${scErrTd(scErrs(a.R,'R'))}<td class="num">${a.A?.n||0}</td><td class="num">${scC(a.A,'#')}</td>${scErrTd(scErrs(a.A,'A'))}<td class="num">${scEff(a.A,'A')}</td><td class="num">${scC(a.M,'#')}</td><td class="num">${a.D?.n||0}</td>${scErrTd(SC_F.reduce((s,[f])=>s+scErrs(a[f],f),0),true)}</tr>`;
-  const ord=[1,6,5,4,3,2],ER=scErrSum(sets,P,ids);
+  const ord=[1,6,5,4,3,2],ER=scErrSum(sets,P,ids),RL=scRoles(sets),SR=scSoRec(sets),attR=SC_RG.filter(([k])=>RL.R[k]?.A?.n);
   const txt=`*Scout ${t?.sigla||''}* ${m?`${m.casa} – ${m.ospite}, ${fmtD(m.data)}`:''}\nSet ${won}–${lost}: ${sets.map(x=>`${x.us}-${x.them}`).join(', ')}\n`+
     `Punti fatti ${fatti}: attacco ${pt.att}, muro ${pt.muro}, ace ${pt.ace}, errori avversari ${pt.avv}. Errori nostri ${pt.err}\n`+
     (ER.n?`Errori: ${SC_F.filter(([f])=>ER.tot[f]).map(([f,l])=>`${l.toLowerCase()} ${ER.tot[f]}`).join(', ')}${ER.mur?` (di cui ${ER.mur} ${ER.mur===1?"attacco murato":"attacchi murati"})`:''}; sul finale di set ${ER.fin}. Più errori: ${ER.who.slice(0,3).map(([id,,k])=>`${scName(id)} ${k}`).join(', ')}\n`:'')+
     `Attacco: ${tot.A?.n||0} colpi, ${scC(tot.A,'#')} punti, efficienza ${scEff(tot.A,'A')}\nRicezione: positività ${scPos(tot.R)}, perfetta ${scPct(scC(tot.R,'#'),tot.R?.n)}\nBattuta: ${scC(tot.B,'#')} ace, ${scC(tot.B,'=')} errori, efficienza ${scEff(tot.B,'B')}\n`+
     `Cambio palla ${scPct(Object.values(so).reduce((s,x)=>s+x[0],0),Object.values(so).reduce((s,x)=>s+x[1],0))} · break ${scPct(Object.values(bp).reduce((s,x)=>s+x[0],0),Object.values(bp).reduce((s,x)=>s+x[1],0))}\n`+
+    (attR.length?`Attacco per ruolo (eff): ${attR.map(([k,l])=>`${l.toLowerCase()} ${scEff(RL.R[k].A,'A')}`).join(', ')}
+`:'')+
+    (RL.R.L?.R?.n?`Libero: ${RL.R.L.R.n} ricezioni (${scPct(RL.R.L.R.n,Object.values(RL.R).reduce((s,a)=>s+(a.R?.n||0),0))} della squadra), positività ${scPos(RL.R.L.R)}
+`:'')+
+    (SR.tb[1]||SR.ts[1]?`Cambio palla con ricezione buona ${scPct(SR.tb[0],SR.tb[1])}, scarsa ${scPct(SR.ts[0],SR.ts[1])}
+`:'')+
     `Migliori realizzatrici: ${ids.slice().sort((a,b)=>pts(b)-pts(a)).slice(0,3).map(id=>`${scName(id)} ${pts(id)}`).join(', ')||'—'}`;
   openDrawer('Report scout',`<div class="sc-rep"><p style="margin-top:0"><b>${chip(t)} ${m?matchLine(m):''}</b><br><span class="meta">${m?fmtDow(m.data)+' · '+esc(m.ora):''}${r.modulo?' · modulo '+esc(r.modulo):''} · ${r.fine?'scout concluso':'scout in corso'}</span></p>
   <div class="summary"><span>Set <b class="num">${won}–${lost}</b></span>${sets.map((x,i)=>`<span>${i+1}° <b class="num">${x.us}–${x.them}</b></span>`).join('')}</div>
@@ -4203,9 +4258,12 @@ function scReport(r,keep){if(!r)return;const sc=keep?$('#dBody').scrollTop:0;con
   <tr><th>Tot</th><th>Ace</th><th>Err</th><th>Eff</th><th>Tot</th><th>Pos</th><th>Perf</th><th>Err</th><th>Tot</th><th>Pti</th><th>Err</th><th>Eff</th><th>Pti</th><th>Tot</th></tr></thead>
   <tbody>${ids.map(id=>row(scName(id),P[id],scNum(r,id))).join('')||'<tr><td colspan="16" class="empty">Nessuna azione registrata.</td></tr>'}</tbody>${ids.length?`<tfoot>${row('Squadra',tot,'')}</tfoot>`:''}</table></div>
   ${ids.length?`<p class="hint">Punti per atleta: ${ids.slice().sort((a,b)=>pts(b)-pts(a)).map(id=>`${esc(scName(id))} ${pts(id)}${err(id)?` (${err(id)} err.)`:''}`).join(' · ')}</p>`:''}
+  ${scRoleHtml(r,RL,row)}
+  ${scLibHtml(r,sets,RL,P)}
   <h3 style="margin:14px 0 6px">Rotazioni</h3>${scRotSvg(so,bp)}<p class="hint" style="margin-top:2px">Punti vinti sugli scambi giocati in ogni rotazione (cambio palla e break insieme); in rosso la più difficile.</p><div class="sc-tw"><table class="sc-tab"><thead><tr><th>Rotazione</th><th>Cambio palla</th><th>Break</th><th>Attacco eff</th><th>Ricezione pos</th><th>Errori</th></tr></thead>
   <tbody>${ord.map(k=>`<tr><td><b>P${k}</b></td><td class="num">${so[k]?`${scPct(so[k][0],so[k][1])} <span class="meta">${so[k][0]}/${so[k][1]}</span>`:'—'}</td><td class="num">${bp[k]?`${scPct(bp[k][0],bp[k][1])} <span class="meta">${bp[k][0]}/${bp[k][1]}</span>`:'—'}</td><td class="num">${scEff(rf[k]?.A,'A')}</td><td class="num">${scPos(rf[k]?.R)}</td>${scErrTd(SC_F.reduce((s,[f])=>s+scErrs(rf[k]?.[f],f),0))}</tr>`).join('')}</tbody></table></div>
   <p class="hint">${r.palleggiatori?.length?'P1 = palleggiatore in zona 1, poi P6, P5… seguendo il giro.':'Scout senza palleggiatore indicato: P1 è il sestetto di partenza.'} Cambio palla = punti vinti in ricezione / ricezioni. Break = punti vinti in battuta / battute.</p>
+  ${scSoRecHtml(SR)}
   <h3 style="margin:14px 0 6px">Distribuzione degli attacchi</h3>${scDistHtml(r,sets)}
   ${scOppHtml(r,sets)}
   ${scZoneHtml(sets)}
